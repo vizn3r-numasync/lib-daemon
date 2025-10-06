@@ -1,4 +1,4 @@
-package protocol
+package dftp
 
 // Default values for the protocol
 const (

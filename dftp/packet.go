@@ -1,8 +1,9 @@
-package protocol
+package dftp
 
 import (
 	"fmt"
 	"hash/crc32"
+	"log"
 )
 
 type (
@@ -85,10 +86,23 @@ const (
 	FLAG_SYN                        // 7
 )
 
+func NewEmplyPacket() *Packet {
+	return &Packet{
+		Type:      0,
+		Flags:     0,
+		Length:    0,
+		SessionID: 0,
+		SEQNum:    0,
+		ACKNum:    0,
+		Checksum:  0,
+		Data:      nil,
+	}
+}
+
 func Deserialize(data []byte) (error, *Packet) {
-	p := &Packet{}
-	if len(data) < 20 || len(data) != int(20+p.Length) {
-		return fmt.Errorf("packet too short or invalid"), nil
+	p := NewEmplyPacket()
+	if len(data) < 20 {
+		return fmt.Errorf("deserialize: packet too short or invalid"), nil
 	}
 	p.Type = MessageType(data[0])
 	p.Flags = Flags(data[1])
@@ -98,9 +112,11 @@ func Deserialize(data []byte) (error, *Packet) {
 	p.ACKNum = uint32(data[12])<<24 | uint32(data[13])<<16 | uint32(data[14])<<8 | uint32(data[15])
 	p.Checksum = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
 	p.Data = data[20:]
-	if err := p.Validate(); err != nil {
-		return err, nil
-	}
+
+	log.Println("Deserialize", p.Type, p.Flags, p.Length, p.SessionID, p.SEQNum, p.ACKNum, p.Checksum, string(p.Data))
+	//if err := p.Validate(); err != nil {
+	//	return err, nil
+	//}
 	return nil, p
 }
 
@@ -109,6 +125,8 @@ func (p *Packet) Serialize() []byte {
 	if p.Length == 0 {
 		p.Length = uint16(len(p.Data))
 	}
+
+	log.Println("Serialize", p.Type, p.Flags, p.Length, p.SessionID, p.SEQNum, p.ACKNum, p.Checksum, string(p.Data))
 
 	data := make([]byte, 20+len(p.Data))
 	data[0] = byte(p.Type)
@@ -132,14 +150,14 @@ func (p *Packet) Serialize() []byte {
 	data[18] = byte(p.Checksum >> 8)
 	data[19] = byte(p.Checksum)
 	copy(data[20:], p.Data)
-	return nil
+	return data
 }
 
 // Validate validates the packet.
 // TODO: implement MesageType validation
 func (p *Packet) Validate() error {
-	if p.Length == 0 {
-		return fmt.Errorf("packet length is zero")
+	if p.Length == 0 && len(p.Data) != 0 {
+		return fmt.Errorf("packet length is invalid")
 	}
 	if p.Checksum == 0 {
 		return fmt.Errorf("packet checksum is zero")
