@@ -1,3 +1,3 @@
-module github.com/vizn3r-numasync/lib-daemon
+module github.com/vizn3r-numasync/lib-numa
 
 go 1.25.1

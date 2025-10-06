@@ -98,6 +98,9 @@ func Deserialize(data []byte) (error, *Packet) {
 	p.ACKNum = uint32(data[12])<<24 | uint32(data[13])<<16 | uint32(data[14])<<8 | uint32(data[15])
 	p.Checksum = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
 	p.Data = data[20:]
+	if err := p.Validate(); err != nil {
+		return err, nil
+	}
 	return nil, p
 }
 
