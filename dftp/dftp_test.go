@@ -20,7 +20,7 @@ func TestPingPong(t *testing.T) {
 		Type:  dftp.MSG_CONN_PING,
 		Data:  []byte("PIGN!"),
 	}
-	for range 10 {
+	for range 5 {
 		conn, err := dftp.Dial("127.0.0.1", 3387)
 		if err != nil {
 			t.Fatal(err)

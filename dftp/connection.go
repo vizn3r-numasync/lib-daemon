@@ -1,3 +1,6 @@
+// dftp/connection.go handles the connection between two DFTP nodes.
+// It handles packet sending and receiving, and the packet channel.
+
 package dftp
 
 import (
@@ -10,37 +13,59 @@ import (
 type ConnectionState int
 
 type Connection struct {
-	State        ConnectionState
+	Handler      *ConnHandler
 	LocalSEQNum  uint32
 	RemoteSEQNum uint32
 	SessionID    uint32
 	LocalAddr    *net.UDPAddr
 	RemoteAddr   *net.UDPAddr
-	conn         *net.UDPConn
-	packet       chan *Packet
+
+	conn   *net.UDPConn
+	packet chan *Packet
 }
 
-const (
-	CONN_CLOSED ConnectionState = iota
-	CONN_SYN_SENT
-	CONN_ESTABLISHED
-	CONN_FIN_WAIT
-)
+//------------------------------------------------------------------------------
+//
+// Connection creation / destruction
+//
+//------------------------------------------------------------------------------
 
+// NewEmptyConnection creates a new empty Connection struct.
+// Use NewConn() to create a connection.
 func NewEmptyConnection() *Connection {
 	return &Connection{
-		State:        CONN_CLOSED,
+		Handler:      nil,
 		LocalSEQNum:  0,
 		RemoteSEQNum: 0,
 		SessionID:    0,
 		LocalAddr:    nil,
 		RemoteAddr:   nil,
 		conn:         nil,
-		packet:       make(chan *Packet, 100),
+		packet:       make(chan *Packet, MAX_PACKET_CHAN_SIZE),
 	}
 }
 
-func Dial(ip string, port int) (conn *Connection, err error) {
+// FlushPackets flushes all packets in the packet channel buffer.
+func (conn *Connection) FlushPackets() {
+	for {
+		select {
+		case packet := <-conn.packet:
+			log.Println("Flushing packet", packet.Type)
+		default:
+			return
+		}
+	}
+}
+
+// NewConn creates a new UDP connection to the given IP and port.
+//
+// For multiple connection listening, use ConnManager.Listen() instead.
+// This does not support multiple concurrent connections.
+// Use this primarily for dialing.
+//
+// Can be used to dial or listen or both using the same methods (conn.Send() and conn.Receive()).
+// If you want a blocking listener, set blocking to true. (default is false)
+func NewConn(ip string, port int, blocking bool) (conn *Connection, err error) {
 	conn = NewEmptyConnection()
 
 	log.Println("Dialing", ip, port)
@@ -57,11 +82,17 @@ func Dial(ip string, port int) (conn *Connection, err error) {
 
 	conn.LocalAddr = conn.conn.LocalAddr().(*net.UDPAddr)
 
-	go conn.receiver()
+	// Just so I don't have to write two different functions with the same functionality :)
+	if blocking {
+		conn.receiver()
+	} else {
+		go conn.receiver()
+	}
 
 	return conn, nil
 }
 
+// Close closes a connection.
 func (conn *Connection) Close() error {
 	if conn.conn != nil {
 		close(conn.packet)
@@ -70,6 +101,13 @@ func (conn *Connection) Close() error {
 	return nil
 }
 
+//------------------------------------------------------------------------------
+//
+// Packet sending / receiving / handling / helper functions
+//
+//------------------------------------------------------------------------------
+
+// Send sends a packet to the Connection.RemoteAddr.
 func (conn *Connection) Send(packet *Packet) error {
 	buf := packet.Serialize()
 
@@ -83,33 +121,10 @@ func (conn *Connection) Send(packet *Packet) error {
 	return nil
 }
 
-func (conn *Connection) receiver() {
-	buf := make([]byte, PACKET_SIZE)
-	for {
-		n, remoteAddr, err := conn.conn.ReadFromUDP(buf)
-		if err != nil {
-			log.Println("Error receiving from", conn.RemoteAddr, "bytes:", n)
-			return
-		}
-		conn.RemoteAddr = remoteAddr
-		log.Println("Received", conn.RemoteAddr, "bytes:", n)
-
-		err, packet := Deserialize(buf[:n])
-		if err != nil {
-			log.Println("Error deserializing packet", err)
-			return
-		}
-
-		log.Println("Received", string(packet.Data))
-
-		select {
-		case conn.packet <- packet:
-		default:
-			log.Println("Packet queue full")
-		}
-	}
-}
-
+// Receive waits for a packet to be received and returns it.
+// If the packet is not the expected type, it will be logged and the next packet will be received.
+// If the timeout is reached, it will return an error.
+// Receive is blocking and will not return until a packet is received or the timeout is reached.
 func (conn *Connection) Receive(expType MessageType, timeout time.Duration) (*Packet, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -126,44 +141,76 @@ func (conn *Connection) Receive(expType MessageType, timeout time.Duration) (*Pa
 	}
 }
 
-// UDP Listener
-func UDPListen(ip string, port int) (err error) {
-	conn := NewEmptyConnection()
-
-	conn.LocalAddr = &net.UDPAddr{
-		IP:   net.ParseIP(ip),
-		Port: port,
+// Helper function to check if an error is a net.OpError with a closed error.
+func errIsClosed(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	conn.conn, err = net.ListenUDP("udp", conn.LocalAddr)
-	if err != nil {
-		return err
-	}
-	defer conn.conn.Close()
-
-	buf := make([]byte, PACKET_SIZE)
-	var n int
-	for {
-		n, conn.RemoteAddr, err = conn.conn.ReadFromUDP(buf)
-		if err != nil {
-			return err
+	if opErr, ok := err.(*net.OpError); ok {
+		if opErr.Err == net.ErrClosed {
+			return true
 		}
+	}
+	return false
+}
+
+// receiver is the main loop for a connection.
+// It reads from the connection and sends the packet/s to the packet channel.
+func (conn *Connection) receiver() {
+	buf := make([]byte, PACKET_SIZE)
+	for {
+		// Read from the connection
+		n, remoteAddr, err := conn.conn.ReadFromUDP(buf)
+		// If the connection was closed, stop the receiver
+		if errIsClosed(err) {
+			log.Println("Connection closed")
+			conn.Close()
+			return
+		}
+		if err != nil {
+			log.Println("Error receiving from", conn.RemoteAddr, "err:", err)
+			return
+		}
+
+		conn.RemoteAddr = remoteAddr
 		log.Println("Received", conn.RemoteAddr, "bytes:", n)
 
 		err, packet := Deserialize(buf[:n])
 		if err != nil {
-			return err
+			log.Println("Error deserializing packet", err)
+			return
 		}
 
 		log.Println("Received", string(packet.Data))
+		packet, err = conn.handlePacket(packet)
+		if err != nil {
+			log.Println("Error handling packet", err)
+			return
+		}
 
-		switch packet.Type {
-		case MSG_CONN_PING:
-			log.Println("Received PIGN!, responding with POGN!")
-			conn.Send(&Packet{
-				Type: MSG_CONN_PONG,
-				Data: []byte("POGN!"),
-			})
+		err = conn.Send(packet)
+		if err != nil {
+			log.Println("Error sending packet", err)
+			return
+		}
+
+		select {
+		case conn.packet <- packet:
+		default:
+			log.Println("Packet queue full")
 		}
 	}
+}
+
+// handlePacket handles a packet received from the Connection.RemoteAddr.
+func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
+	switch packet.Type {
+	case MSG_CONN_PING:
+		log.Println("Received PIGN!, responding with POGN!")
+		return &Packet{
+			Type: MSG_CONN_PONG,
+			Data: []byte("POGN!"),
+		}, nil
+	}
+	return packet, nil
 }
