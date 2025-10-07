@@ -5,7 +5,6 @@ package dftp
 import (
 	"fmt"
 	"hash/crc32"
-	"log"
 )
 
 type (
@@ -29,7 +28,7 @@ type Packet struct {
 
 // NewPacket creates a new empty packet.
 // The packet is not valid until it is filled with data.
-func NewEmplyPacket() *Packet {
+func NewEmptyPacket() *Packet {
 	return &Packet{
 		Type:      0,
 		Flags:     0,
@@ -45,7 +44,7 @@ func NewEmplyPacket() *Packet {
 // Deserialize deserializes a packet from a byte slice.
 // Returns an error if the packet data is invalid.
 func Deserialize(data []byte) (*Packet, error) {
-	p := NewEmplyPacket()
+	p := NewEmptyPacket()
 	if len(data) < 20 {
 		return nil, fmt.Errorf("deserialize: packet too short or invalid")
 	}
@@ -58,7 +57,6 @@ func Deserialize(data []byte) (*Packet, error) {
 	p.Checksum = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
 	p.Data = data[20:]
 
-	log.Println("Deserialize", p.Type, p.Flags, p.Length, p.SessionID, p.SEQNum, p.ACKNum, p.Checksum, string(p.Data))
 	//if err := p.Validate(); err != nil {
 	//	return err, nil
 	//}
@@ -71,8 +69,6 @@ func (p *Packet) Serialize() []byte {
 	if p.Length == 0 {
 		p.Length = uint16(len(p.Data))
 	}
-
-	log.Println("Serialize", p.Type, p.Flags, p.Length, p.SessionID, p.SEQNum, p.ACKNum, p.Checksum, string(p.Data))
 
 	data := make([]byte, 20+len(p.Data))
 	data[0] = byte(p.Type)

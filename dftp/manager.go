@@ -3,9 +3,16 @@
 package dftp
 
 import (
-	"log"
+	"github.com/vizn3r/go-lib/logger"
 	"net"
 )
+
+var log *logger.Logger
+
+func init() {
+	log = logger.New("DFTP", logger.Cyan)
+	log.SetLevel(logger.LevelDebug)
+}
 
 type ConnManager struct {
 	LocalAddr *net.UDPAddr
@@ -18,9 +25,6 @@ func NewConnManager(host string, port int) *ConnManager {
 	addr := &net.UDPAddr{
 		IP:   net.ParseIP(host),
 		Port: port,
-	}
-	if host == "" || port == 0 {
-		addr = nil
 	}
 	return &ConnManager{
 		LocalAddr: addr,
@@ -52,11 +56,13 @@ func (m *ConnManager) Listen() (err error) {
 		return err
 	}
 
+	log.Info("Listening on ", m.LocalAddr)
+
 	for {
 		buf := make([]byte, PACKET_SIZE)
 		n, addr, err := m.conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Println("Error reading from UDP socket:", err)
+			log.Error("Error reading from UDP socket: ", err)
 			continue
 		}
 		if n == 0 {
@@ -69,9 +75,21 @@ func (m *ConnManager) Listen() (err error) {
 		}
 		packet, err := Deserialize(buf[:n])
 		if err != nil {
-			log.Println("Error deserializing packet:", err)
+			log.Error("Error deserializing packet: ", err)
 			continue
 		}
+		log.Debug("Received packet from ", addr, " type: ", packet.Type, " data: ", string(packet.Data))
+
+		packet, err = conn.handlePacket(packet)
+		if err != nil {
+			log.Error("Error handling packet: ", err)
+			continue
+		}
+		if _, err := m.conn.WriteToUDP(packet.Serialize(), addr); err != nil {
+			log.Error("Error sending response: ", err)
+		}
+
+		// Also put the packet in the channel for application-level handling
 		conn.packet <- packet
 	}
 }

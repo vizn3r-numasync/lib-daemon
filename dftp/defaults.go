@@ -25,7 +25,7 @@ const (
 // 0x00 - 0x0F: Connection Management
 const (
 	MSG_CONN_SYN       MessageType = 0x00 + iota // 0x00
-	MGS_CONN_SYN_ACK                             // 0x01
+	MSG_CONN_SYN_ACK                             // 0x01
 	MSG_CONN_PING                                // 0x02
 	MSG_CONN_PONG                                // 0x03
 	MSG_CONN_CLOSE                               // 0x04
