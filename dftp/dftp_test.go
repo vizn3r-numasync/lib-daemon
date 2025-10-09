@@ -18,8 +18,7 @@ var m *dftp.ConnManager
 func init() {
 	go func() {
 		m = dftp.NewConnManager("127.0.0.1", 3387)
-		ready <- struct{}{}
-		if err := m.Listen(); err != nil {
+		if err := m.Listen(ready); err != nil {
 			log.Println(err)
 		}
 	}()

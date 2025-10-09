@@ -52,13 +52,17 @@ func (m *ConnManager) CloseConnection(addr *net.UDPAddr) {
 	delete(m.conns, addr.String())
 }
 
-func (m *ConnManager) Listen() (err error) {
+func (m *ConnManager) Listen(ready chan<- struct{}) (err error) {
 	m.conn, err = net.ListenUDP("udp", m.LocalAddr)
 	if err != nil {
 		return err
 	}
 
 	log.Info("Listening on ", m.LocalAddr)
+
+	if ready != nil {
+		ready <- struct{}{}
+	}
 
 	for {
 		buf := make([]byte, PACKET_SIZE)
