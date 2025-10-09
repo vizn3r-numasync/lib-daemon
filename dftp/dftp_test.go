@@ -4,7 +4,6 @@ import (
 	"log"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/vizn3r-numasync/lib-numa/dftp"
 )
@@ -29,7 +28,7 @@ func TestPingPong(t *testing.T) {
 		Data:  []byte("PIGN!"),
 	}
 	var wg sync.WaitGroup
-	for range 10 {
+	for range 1000 {
 		wg.Go(func() {
 			conn, err := dftp.NewConn("127.0.0.1", 3387)
 			if err != nil {
@@ -38,14 +37,13 @@ func TestPingPong(t *testing.T) {
 			}
 			defer conn.Close()
 			conn.Send(p)
-			resp, err := conn.Receive(dftp.MSG_POGN, time.Second)
+			packet, err := conn.Recv()
 			if err != nil {
 				t.Fatal(err)
 				return
 			}
-			if string(resp.Data) != "POGN!" {
-				log.Println("unexpected data")
-				return
+			if string(packet.Data) != "POGN!" {
+				t.Fatal("Wrong data")
 			}
 		})
 	}

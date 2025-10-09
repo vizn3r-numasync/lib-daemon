@@ -6,7 +6,6 @@ package dftp
 import (
 	"fmt"
 	"net"
-	"time"
 )
 
 type ConnState int
@@ -134,24 +133,8 @@ func (conn *Connection) Send(packet *Packet) error {
 	return nil
 }
 
-// Receive waits for a packet to be received and returns it.
-// If the packet is not the expected type, it will be logged and the next packet will be received.
-// If the timeout is reached, it will return an error.
-// Receive is blocking and will not return until a packet is received or the timeout is reached.
-func (conn *Connection) Receive(expType MessageType, timeout time.Duration) (*Packet, error) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for {
-		select {
-		case packet := <-conn.packet:
-			if packet.Type == expType {
-				return packet, nil
-			}
-			log.Warn("Received unexpected packet ", packet.Type)
-		case <-timer.C:
-			return nil, fmt.Errorf("Timeout")
-		}
-	}
+func (conn *Connection) Recv() (*Packet, error) {
+	return <-conn.packet, nil
 }
 
 // Helper function to check if an error is a net.OpError with a closed error.
@@ -192,8 +175,6 @@ func (conn *Connection) receiver() {
 			return
 		}
 
-		log.Info("Received: ", string(packet.Data))
-
 		select {
 		case conn.packet <- packet:
 			log.Debug("Putting packet in channel: ", string(packet.Data))
@@ -201,21 +182,38 @@ func (conn *Connection) receiver() {
 			log.Warn("Packet queue full")
 		}
 
-		packet, err = conn.handlePacket(packet)
+		log.Info("Received: ", string(packet.Data))
+
+		npacket, err := conn.handlePacket(packet)
 		if err != nil {
 			log.Error("Error handling packet: ", err)
 			return
 		}
 
-		if packet != nil {
-			err = conn.Send(packet)
+		if npacket != nil {
+			err = conn.Send(npacket)
 			if err != nil {
 				log.Error("Error sending packet: ", err)
 				return
 			}
 		}
-
 	}
+}
+
+func (conn *Connection) handleReq(buf []byte) {
+	packet, err := Deserialize(buf)
+	if err != nil {
+		log.Error("Error deserializing packet: ", err)
+		return
+	}
+	log.Debug("Received packet from ", conn.RemoteAddr, " type: ", packet.Type, " data: ", string(packet.Data))
+
+	packet, err = conn.handlePacket(packet)
+	if err != nil {
+		log.Error("Error handling packet: ", err)
+		return
+	}
+	conn.Send(packet)
 }
 
 // handlePacket handles a packet received from the Connection.RemoteAddr.

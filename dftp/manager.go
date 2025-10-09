@@ -74,9 +74,10 @@ func (m *ConnManager) Listen() (err error) {
 		if !ok {
 			conn = m.NewConnection(addr)
 			conn.conn = m.conn
+			conn.RemoteAddr = addr
 			m.conns[addr.String()] = conn
 		}
-		go m.handleReq(buf[:n], addr)
+		go conn.handleReq(buf[:n])
 	}
 
 }
@@ -85,22 +86,4 @@ func (m *ConnManager) Close() {
 	for _, conn := range m.conns {
 		conn.Close()
 	}
-}
-
-func (m *ConnManager) handleReq(buf []byte, addr *net.UDPAddr) {
-	conn, _ := m.conns[addr.String()]
-
-	packet, err := Deserialize(buf)
-	if err != nil {
-		log.Error("Error deserializing packet: ", err)
-		return
-	}
-	log.Debug("Received packet from ", addr, " type: ", packet.Type, " data: ", string(packet.Data))
-
-	packet, err = conn.handlePacket(packet)
-	if err != nil {
-		log.Error("Error handling packet: ", err)
-		return
-	}
-	conn.Send(packet)
 }
