@@ -11,7 +11,7 @@ var log *logger.Logger
 
 func init() {
 	log = logger.New("DFTP", logger.Cyan)
-	log.SetLevel(logger.LevelDebug)
+	log.SetLevel(logger.LevelError)
 }
 
 type ConnManager struct {
@@ -84,6 +84,6 @@ func (m *ConnManager) Listen() (err error) {
 
 func (m *ConnManager) Close() {
 	for _, conn := range m.conns {
-		conn.Close()
+		go conn.Close()
 	}
 }

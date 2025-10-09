@@ -4,6 +4,7 @@
 package dftp
 
 import (
+	"context"
 	"fmt"
 	"net"
 )
@@ -20,6 +21,11 @@ type Connection struct {
 
 	conn   *net.UDPConn
 	packet chan *Packet
+
+	ready chan struct{}
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 const (
@@ -39,6 +45,7 @@ const (
 // Use NewConn() to create a connection.
 func NewEmptyConnection() *Connection {
 	HandlersInit()
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Connection{
 		ConnState:    STATE_CLOSED,
 		LocalSEQNum:  0,
@@ -48,6 +55,9 @@ func NewEmptyConnection() *Connection {
 		RemoteAddr:   nil,
 		conn:         nil,
 		packet:       make(chan *Packet, MAX_PACKET_CHAN_SIZE),
+		ready:        make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -92,7 +102,11 @@ func NewConn(ip string, port int) (conn *Connection, err error) {
 
 	conn.LocalAddr = conn.conn.LocalAddr().(*net.UDPAddr)
 
-	go conn.receiver()
+	go func() {
+		close(conn.ready)
+		conn.receiver()
+	}()
+	<-conn.ready
 
 	conn.ConnState = STATE_IDLE
 
@@ -103,6 +117,7 @@ func NewConn(ip string, port int) (conn *Connection, err error) {
 // Close closes a connection.
 func (conn *Connection) Close() error {
 	conn.ConnState = STATE_CLOSED
+	conn.cancel()
 	close(conn.packet)
 
 	if conn.conn != nil {
@@ -134,7 +149,11 @@ func (conn *Connection) Send(packet *Packet) error {
 }
 
 func (conn *Connection) Recv() (*Packet, error) {
-	return <-conn.packet, nil
+	packet, ok := <-conn.packet
+	if !ok {
+		return nil, fmt.Errorf("Connection closed")
+	}
+	return packet, nil
 }
 
 // Helper function to check if an error is a net.OpError with a closed error.
@@ -155,13 +174,30 @@ func errIsClosed(err error) bool {
 func (conn *Connection) receiver() {
 	buf := make([]byte, PACKET_SIZE)
 	for {
+		select {
+		case <-conn.ctx.Done():
+			log.Info("Connection closed")
+			return
+		default:
+		}
+
 		n, remoteAddr, err := conn.conn.ReadFromUDP(buf)
 		conn.RemoteAddr = remoteAddr
-		// If the connection was closed, stop the receiver
+
+		if conn.ctx.Err() != nil {
+			log.Info("Connection closed")
+			return
+		}
+
+		if err, ok := err.(*net.OpError); ok && err.Timeout() {
+			continue
+		}
+
 		if errIsClosed(err) || conn.ConnState == STATE_CLOSED {
 			log.Info("Connection closed")
 			return
 		}
+
 		if err != nil {
 			log.Error("Error receiving from ", conn.RemoteAddr, "err: ", err)
 			return
@@ -178,6 +214,9 @@ func (conn *Connection) receiver() {
 		select {
 		case conn.packet <- packet:
 			log.Debug("Putting packet in channel: ", string(packet.Data))
+		case <-conn.ctx.Done():
+			log.Info("Connection closed while receiving packet")
+			return
 		default:
 			log.Warn("Packet queue full")
 		}
