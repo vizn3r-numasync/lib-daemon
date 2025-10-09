@@ -24,50 +24,32 @@ const (
 // Message types
 // 0x00 - 0x0F: Connection Management
 const (
-	MSG_CONN_SYN       MessageType = 0x00 + iota // 0x00
-	MSG_CONN_SYN_ACK                             // 0x01
-	MSG_CONN_PING                                // 0x02
-	MSG_CONN_PONG                                // 0x03
-	MSG_CONN_CLOSE                               // 0x04
-	MSG_CONN_CLOSE_ACK                           // 0x05
+	MSG_HELLO MessageType = 0x00 + iota
+	MSG_PIGN
+	MSG_POGN
+	MSG_BYE
 )
 
 // 0x10 - 0x1F: Daemon <-> Server
 const (
-	MSG_DAEMON_REGISTER          MessageType = 0x10 + iota // 0x10
-	MSG_DAEMON_REGISTER_ACK                                // 0x11
-	MSG_DAEMON_HEARTBEAT                                   // 0x12
-	MSG_DAEMON_HEARTBEAT_ACK                               // 0x13
-	MSG_FILE_METADATA_UPLOAD                               // 0x14
-	MSG_FILE_METADATA_UPLOAD_ACK                           // 0x15
-	MSG_STORAGE_ASSIGN_REQUEST                             // 0x16
-	MSG_STORAGE_ASSIGN_RESPONSE                            // 0x17
-	MSG_P2P_COORD_REQUEST                                  // 0x18
-	MSG_P2P_COORD_RESPONSE                                 // 0x19
+	MSG_REGISTER MessageType = 0x10 + iota
+	MSG_PEER_INFO
 )
 
 // 0x20 - 0x2F: Daemon <->  Daemon
 const (
-	MSG_TRANSFER_INIT         MessageType = 0x20 + iota // 0x20
-	MSG_TRANSFER_INIT_ACK                               // 0x21
-	MSG_TRANSFER_COMPLETE                               // 0x22
-	MSG_TRANSFER_COMPLETE_ACK                           // 0x23
-	MSG_CHUNK_DATA                                      // 0x24
-	MSG_CHUNK_DATA_ACK                                  // 0x25
-	MSG_CHUNK_REQUEST                                   // 0x26
-	MSG_CHUNK_REQUEST_NACK                              // 0x27
+	MSG_TRANSFER_INIT MessageType = 0x20 + iota
+	MSG_DATA
+	MSG_CHECK
+	MSG_MISSING
+	MSG_COMPLETE
 )
 
 // 0xF0 - 0xFF: Errors and debug
 const (
-	MSG_DEBUG_MESSAGE          MessageType = 0xF0 + iota // 0xF0
-	MSG_ERROR_GENERIC                                    // 0xF1
-	MSG_ERROR_AUTH                                       // 0xF2
-	MSG_ERROR_NOT_FOUND                                  // 0xF3
-	MSG_ERROR_QUOTA_EXCEEDED                             // 0xF4
-	MSG_ERROR_RATE_LIMITED                               // 0xF5
-	MSG_ERROR_INVALID_SESSION                            // 0xF6
-	MSG_ERROR_VERSION_MISMATCH                           // 0xF7
+	MSG_DEBUG MessageType = 0xF0 + iota
+	MSG_ERROR
+	MSG_ERR_NOT_FOUND
 )
 
 // Flags

@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-type ConnectionState int
+type ConnState int
 
 type Connection struct {
-	Handler      *ConnHandler
+	ConnState
 	LocalSEQNum  uint32
 	RemoteSEQNum uint32
 	SessionID    uint32
@@ -23,6 +23,13 @@ type Connection struct {
 	packet chan *Packet
 }
 
+const (
+	STATE_CLOSED    ConnState = iota // Connection is closed
+	STATE_IDLE                       // Waitig for peer connection
+	STATE_CONNECTED                  // Connection established
+	STATE_DATA                       // Data transfer in progress
+)
+
 //------------------------------------------------------------------------------
 //
 // Connection creation / destruction
@@ -32,8 +39,9 @@ type Connection struct {
 // NewEmptyConnection creates a new empty Connection struct.
 // Use NewConn() to create a connection.
 func NewEmptyConnection() *Connection {
+	HandlersInit()
 	return &Connection{
-		Handler:      nil,
+		ConnState:    STATE_CLOSED,
 		LocalSEQNum:  0,
 		RemoteSEQNum: 0,
 		SessionID:    0,
@@ -64,6 +72,7 @@ func (conn *Connection) FlushPackets() {
 //
 // Can be used to dial or listen or both using the same methods (conn.Send() and conn.Receive()).
 func NewConn(ip string, port int) (conn *Connection, err error) {
+
 	conn = NewEmptyConnection()
 
 	log.Info("Dialing ", ip, port)
@@ -86,14 +95,18 @@ func NewConn(ip string, port int) (conn *Connection, err error) {
 
 	go conn.receiver()
 
+	conn.ConnState = STATE_IDLE
+
 	log.Debug("Listening on: ", conn.LocalAddr)
 	return conn, nil
 }
 
 // Close closes a connection.
 func (conn *Connection) Close() error {
+	conn.ConnState = STATE_CLOSED
+	close(conn.packet)
+
 	if conn.conn != nil {
-		close(conn.packet)
 		return conn.conn.Close()
 	}
 	return nil
@@ -159,11 +172,10 @@ func errIsClosed(err error) bool {
 func (conn *Connection) receiver() {
 	buf := make([]byte, PACKET_SIZE)
 	for {
-
 		n, remoteAddr, err := conn.conn.ReadFromUDP(buf)
 		conn.RemoteAddr = remoteAddr
 		// If the connection was closed, stop the receiver
-		if errIsClosed(err) {
+		if errIsClosed(err) || conn.ConnState == STATE_CLOSED {
 			log.Info("Connection closed")
 			return
 		}
@@ -182,8 +194,12 @@ func (conn *Connection) receiver() {
 
 		log.Info("Received: ", string(packet.Data))
 
-		log.Debug("Putting packet in channel: ", string(packet.Data))
-		conn.packet <- packet
+		select {
+		case conn.packet <- packet:
+			log.Debug("Putting packet in channel: ", string(packet.Data))
+		default:
+			log.Warn("Packet queue full")
+		}
 
 		packet, err = conn.handlePacket(packet)
 		if err != nil {
@@ -199,27 +215,30 @@ func (conn *Connection) receiver() {
 			}
 		}
 
-		select {
-		case conn.packet <- packet:
-		default:
-			log.Warn("Packet queue full")
-		}
 	}
 }
 
 // handlePacket handles a packet received from the Connection.RemoteAddr.
 func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
+	m.RLock()
+	defer m.RUnlock()
 	log.Debug("Received type: ", packet.Type)
-	switch packet.Type {
-	case MSG_CONN_PING:
-		log.Info("Received PIGN!, responding with POGN!")
+	handler, ok := packetHandlers[packet.Type]
+	if !ok {
+		err := fmt.Errorf("No handler for packet type %d", packet.Type)
+		log.Error("Error handling packet: ", err)
 		return &Packet{
-			Type: MSG_CONN_PONG,
-			Data: []byte("POGN!"),
-		}, nil
-	case MSG_CONN_PONG:
-		log.Info("Received POGN!")
-		return nil, nil
+			Type: MSG_ERROR,
+			Data: []byte(err.Error()),
+		}, err
+	}
+	packet, err := handler(packet)
+	if err != nil {
+		log.Error("Error handling packet: ", err)
+		return &Packet{
+			Type: MSG_ERROR,
+			Data: []byte(err.Error()),
+		}, err
 	}
 	return packet, nil
 }

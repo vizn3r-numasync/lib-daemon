@@ -8,8 +8,9 @@ import (
 )
 
 type (
-	MessageType byte
-	Flags       byte
+	MessageType  byte
+	Flags        byte
+	PacketHander func(*Packet) (*Packet, error)
 )
 
 type Packet struct {

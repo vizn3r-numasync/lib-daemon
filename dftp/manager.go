@@ -22,6 +22,7 @@ type ConnManager struct {
 }
 
 func NewConnManager(host string, port int) *ConnManager {
+	HandlersInit()
 	addr := &net.UDPAddr{
 		IP:   net.ParseIP(host),
 		Port: port,
@@ -37,6 +38,7 @@ func (m *ConnManager) NewConnection(addr *net.UDPAddr) *Connection {
 	conn.RemoteAddr = addr
 	conn.LocalAddr = m.LocalAddr
 	conn.conn = m.conn
+	conn.ConnState = STATE_IDLE
 	return conn
 
 }
@@ -71,31 +73,34 @@ func (m *ConnManager) Listen() (err error) {
 		conn, ok := m.conns[addr.String()]
 		if !ok {
 			conn = m.NewConnection(addr)
+			conn.conn = m.conn
 			m.conns[addr.String()] = conn
 		}
-		packet, err := Deserialize(buf[:n])
-		if err != nil {
-			log.Error("Error deserializing packet: ", err)
-			continue
-		}
-		log.Debug("Received packet from ", addr, " type: ", packet.Type, " data: ", string(packet.Data))
-
-		packet, err = conn.handlePacket(packet)
-		if err != nil {
-			log.Error("Error handling packet: ", err)
-			continue
-		}
-		if _, err := m.conn.WriteToUDP(packet.Serialize(), addr); err != nil {
-			log.Error("Error sending response: ", err)
-		}
-
-		// Also put the packet in the channel for application-level handling
-		conn.packet <- packet
+		go m.handleReq(buf[:n], addr)
 	}
+
 }
 
 func (m *ConnManager) Close() {
 	for _, conn := range m.conns {
 		conn.Close()
 	}
+}
+
+func (m *ConnManager) handleReq(buf []byte, addr *net.UDPAddr) {
+	conn, _ := m.conns[addr.String()]
+
+	packet, err := Deserialize(buf)
+	if err != nil {
+		log.Error("Error deserializing packet: ", err)
+		return
+	}
+	log.Debug("Received packet from ", addr, " type: ", packet.Type, " data: ", string(packet.Data))
+
+	packet, err = conn.handlePacket(packet)
+	if err != nil {
+		log.Error("Error handling packet: ", err)
+		return
+	}
+	conn.Send(packet)
 }
