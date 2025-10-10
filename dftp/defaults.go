@@ -25,9 +25,9 @@ const (
 // 0x00 - 0x0F: Connection Management
 const (
 	MSG_HELLO MessageType = 0x00 + iota
+	MSG_BYE
 	MSG_PIGN
 	MSG_POGN
-	MSG_BYE
 )
 
 // 0x10 - 0x1F: Daemon <-> Server

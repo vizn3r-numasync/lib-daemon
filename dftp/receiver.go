@@ -14,26 +14,25 @@ func init() {
 	log.SetLevel(logger.LevelError)
 }
 
-type ConnManager struct {
+type Receiver struct {
 	LocalAddr *net.UDPAddr
 
 	conns map[string]*Connection
 	conn  *net.UDPConn
 }
 
-func NewConnManager(host string, port int) *ConnManager {
-	HandlersInit()
+func NewReceiver(host string, port int) *Receiver {
 	addr := &net.UDPAddr{
 		IP:   net.ParseIP(host),
 		Port: port,
 	}
-	return &ConnManager{
+	return &Receiver{
 		LocalAddr: addr,
 		conns:     make(map[string]*Connection),
 	}
 }
 
-func (m *ConnManager) NewConnection(addr *net.UDPAddr) *Connection {
+func (m *Receiver) NewConnection(addr *net.UDPAddr) *Connection {
 	conn := NewEmptyConnection()
 	conn.RemoteAddr = addr
 	conn.LocalAddr = m.LocalAddr
@@ -43,16 +42,16 @@ func (m *ConnManager) NewConnection(addr *net.UDPAddr) *Connection {
 
 }
 
-func (m *ConnManager) GetConnection(addr *net.UDPAddr) *Connection {
+func (m *Receiver) GetConnection(addr *net.UDPAddr) *Connection {
 	return m.conns[addr.String()]
 }
 
-func (m *ConnManager) CloseConnection(addr *net.UDPAddr) {
+func (m *Receiver) CloseConnection(addr *net.UDPAddr) {
 	m.conns[addr.String()].Close()
 	delete(m.conns, addr.String())
 }
 
-func (m *ConnManager) Listen(ready chan<- struct{}) (err error) {
+func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 	m.conn, err = net.ListenUDP("udp", m.LocalAddr)
 	if err != nil {
 		return err
@@ -86,8 +85,9 @@ func (m *ConnManager) Listen(ready chan<- struct{}) (err error) {
 
 }
 
-func (m *ConnManager) Close() {
+func (m *Receiver) Close() {
 	for _, conn := range m.conns {
 		go conn.Close()
 	}
+	delete(m.conns, "")
 }

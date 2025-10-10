@@ -1,0 +1,41 @@
+goos: linux
+goarch: amd64
+cpu: AMD Ryzen 9 5900HS with Radeon Graphics        
+BenchmarkSingleRequest
+BenchmarkSingleRequest-16         	  112516	     50942 ns/op
+BenchmarkSingleRequest-16         	  120576	     49998 ns/op
+BenchmarkSingleRequest-16         	  116354	     50033 ns/op
+BenchmarkSingleRequest-16         	  121585	     50080 ns/op
+BenchmarkSingleRequest-16         	  120846	     49977 ns/op
+BenchmarkConcurrent
+BenchmarkConcurrent-16            	  769114	      7920 ns/op
+BenchmarkConcurrent-16            	  758509	      7929 ns/op
+BenchmarkConcurrent-16            	  715052	      8000 ns/op
+BenchmarkConcurrent-16            	  729324	      8118 ns/op
+BenchmarkConcurrent-16            	  746706	      8048 ns/op
+BenchmarkWithPool
+BenchmarkWithPool-16              	  227506	     25264 ns/op
+BenchmarkWithPool-16              	  236010	     25087 ns/op
+BenchmarkWithPool-16              	  245217	     24998 ns/op
+BenchmarkWithPool-16              	  230294	     25246 ns/op
+BenchmarkWithPool-16              	  244497	     25216 ns/op
+BenchmarkSingleRequest1400B
+BenchmarkSingleRequest1400B-16    	  100069	     57269 ns/op
+BenchmarkSingleRequest1400B-16    	  102630	     56950 ns/op
+BenchmarkSingleRequest1400B-16    	  103668	     57090 ns/op
+BenchmarkSingleRequest1400B-16    	  101307	     56859 ns/op
+BenchmarkSingleRequest1400B-16    	  101658	     56997 ns/op
+BenchmarkConcurrent1400B
+BenchmarkConcurrent1400B-16       	  569962	     10609 ns/op
+BenchmarkConcurrent1400B-16       	  543340	     10632 ns/op
+BenchmarkConcurrent1400B-16       	  584919	     10730 ns/op
+BenchmarkConcurrent1400B-16       	  556094	     10698 ns/op
+BenchmarkConcurrent1400B-16       	  564136	     10640 ns/op
+BenchmarkWithPool1400B
+BenchmarkWithPool1400B-16         	  183049	     31400 ns/op
+BenchmarkWithPool1400B-16         	  184753	     31366 ns/op
+BenchmarkWithPool1400B-16         	  185211	     31228 ns/op
+BenchmarkWithPool1400B-16         	  183086	     35137 ns/op
+BenchmarkWithPool1400B-16         	  168238	     31638 ns/op
+PASS
+ok  	command-line-arguments	184.658s

@@ -8,23 +8,21 @@ import (
 )
 
 type (
-	MessageType  byte
-	Flags        byte
-	PacketHander func(*Packet) (*Packet, error)
+	MessageType uint8
+	Flags       uint8
 )
 
 type Packet struct {
 	// Header
 	Type      MessageType
-	Flags     Flags
+	StreamID  uint8  // 1 byte
 	Length    uint16 // 2 bytes
 	SessionID uint32 // 4 bytes
-	SEQNum    uint32 // 4 bytes
-	ACKNum    uint32 // 4 bytes
-	Checksum  uint32 // 4 bytes
+	ChunkNum  uint32 // 4 bytes
 
 	// Data
-	Data []byte
+	Checksum uint32 // 4 bytes
+	Data     []byte
 }
 
 // NewPacket creates a new empty packet.
@@ -32,11 +30,9 @@ type Packet struct {
 func NewEmptyPacket() *Packet {
 	return &Packet{
 		Type:      0,
-		Flags:     0,
 		Length:    0,
 		SessionID: 0,
-		SEQNum:    0,
-		ACKNum:    0,
+		ChunkNum:  0,
 		Checksum:  0,
 		Data:      nil,
 	}
@@ -46,15 +42,14 @@ func NewEmptyPacket() *Packet {
 // Returns an error if the packet data is invalid.
 func Deserialize(data []byte) (*Packet, error) {
 	p := NewEmptyPacket()
-	if len(data) < 20 {
+	if len(data) < HEADER_SIZE {
 		return nil, fmt.Errorf("deserialize: packet too short or invalid")
 	}
+	// TODO: Change this so it's correct
 	p.Type = MessageType(data[0])
-	p.Flags = Flags(data[1])
 	p.Length = uint16(data[2])<<8 | uint16(data[3])
 	p.SessionID = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
-	p.SEQNum = uint32(data[8])<<24 | uint32(data[9])<<16 | uint32(data[10])<<8 | uint32(data[11])
-	p.ACKNum = uint32(data[12])<<24 | uint32(data[13])<<16 | uint32(data[14])<<8 | uint32(data[15])
+	p.ChunkNum = uint32(data[8])<<24 | uint32(data[9])<<16 | uint32(data[10])<<8 | uint32(data[11])
 	p.Checksum = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
 	p.Data = data[20:]
 
@@ -71,23 +66,19 @@ func (p *Packet) Serialize() []byte {
 		p.Length = uint16(len(p.Data))
 	}
 
-	data := make([]byte, 20+len(p.Data))
+	// TODO: Change this so it's correct
+	data := make([]byte, HEADER_SIZE+len(p.Data))
 	data[0] = byte(p.Type)
-	data[1] = byte(p.Flags)
 	data[2] = byte(p.Length >> 8)
 	data[3] = byte(p.Length)
 	data[4] = byte(p.SessionID >> 24)
 	data[5] = byte(p.SessionID >> 16)
 	data[6] = byte(p.SessionID >> 8)
 	data[7] = byte(p.SessionID)
-	data[8] = byte(p.SEQNum >> 24)
-	data[9] = byte(p.SEQNum >> 16)
-	data[10] = byte(p.SEQNum >> 8)
-	data[11] = byte(p.SEQNum)
-	data[12] = byte(p.ACKNum >> 24)
-	data[13] = byte(p.ACKNum >> 16)
-	data[14] = byte(p.ACKNum >> 8)
-	data[15] = byte(p.ACKNum)
+	data[8] = byte(p.ChunkNum >> 24)
+	data[9] = byte(p.ChunkNum >> 16)
+	data[10] = byte(p.ChunkNum >> 8)
+	data[11] = byte(p.ChunkNum)
 	data[16] = byte(p.Checksum >> 24)
 	data[17] = byte(p.Checksum >> 16)
 	data[18] = byte(p.Checksum >> 8)
@@ -136,14 +127,11 @@ func (p *Packet) String() string {
 
 func (conn *Connection) NewPacketFromConn(t MessageType, f Flags, data []byte) *Packet {
 	p := &Packet{
-		Type:      t,
-		Flags:     f,
-		Length:    uint16(len(data)),
-		SessionID: conn.SessionID,
-		SEQNum:    conn.LocalSEQNum,
-		ACKNum:    conn.RemoteSEQNum + 1,
-		Checksum:  0,
-		Data:      data,
+		Type:     t,
+		StreamID: conn.ConnID,
+		Length:   uint16(len(data)),
+		Checksum: 0,
+		Data:     data,
 	}
 	p.CalcChecksum()
 	return p
