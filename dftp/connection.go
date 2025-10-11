@@ -18,6 +18,9 @@ type Connection struct {
 	LocalAddr  *net.UDPAddr
 	RemoteAddr *net.UDPAddr
 
+	// Chunk management
+	chunkMap map[uint32]Chunk
+
 	conn   *net.UDPConn
 	packet chan *Packet
 
@@ -242,43 +245,4 @@ func (conn *Connection) receiver() {
 			}
 		}
 	}
-}
-
-func (conn *Connection) handleReq(buf []byte) {
-	packet, err := Deserialize(buf)
-	if err != nil {
-		log.Error("Error deserializing packet: ", err)
-		return
-	}
-	log.Debug("Received packet from ", conn.RemoteAddr, " type: ", packet.Type, " data: ", string(packet.Data))
-
-	packet, err = conn.handlePacket(packet)
-	if err != nil {
-		log.Error("Error handling packet: ", err)
-		return
-	}
-	conn.Send(packet)
-}
-
-// handlePacket handles a packet received from the Connection.RemoteAddr.
-func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
-	log.Debug("Received type: ", packet.Type)
-	handler, ok := packetHandlers[packet.Type]
-	if !ok {
-		err := fmt.Errorf("No handler for packet type %d", packet.Type)
-		log.Error("Error handling packet: ", err)
-		return &Packet{
-			Type: MSG_ERROR,
-			Data: []byte(err.Error()),
-		}, err
-	}
-	packet, err := handler(packet, conn)
-	if err != nil {
-		log.Error("Error handling packet: ", err)
-		return &Packet{
-			Type: MSG_ERROR,
-			Data: []byte(err.Error()),
-		}, err
-	}
-	return packet, nil
 }

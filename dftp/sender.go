@@ -42,13 +42,15 @@ func NewSession(ip string, port int, maxConcurrent uint8) *Sender {
 	s.maxConcurrent = maxConcurrent
 
 	for i := range s.maxConcurrent {
-		conn, err := NewConn(ip, port)
+		conn, err := NewConn(ip, 0) // O so the port is random
 		if err != nil {
 			log.Error("Error creating connection: ", err)
 			return nil
 		}
 		s.Connections[i] = conn
 	}
+
+	s.State = STATE_IDLE
 	return s
 }
 
@@ -61,6 +63,7 @@ func (s *Sender) forEachConn(f func(i uint8, conn *Connection)) {
 func (s *Sender) Send(data []byte) {
 	chunks := map[uint32]Chunk{}
 	chunkMaps := map[uint8][]Chunk{}
+
 	if s.State != STATE_DATA {
 		// Prepare chunks
 		for chunkID := range uint32(len(data) / DATA_SIZE) {
@@ -83,7 +86,7 @@ func (s *Sender) Send(data []byte) {
 				binary.Write(chunkMapData, binary.LittleEndian, chunk.ID)
 				chunkMapData.WriteString(":")
 				binary.Write(chunkMapData, binary.LittleEndian, chunk.Checksum)
-				chunkMapData.WriteString(":")
+				chunkMapData.WriteString(";")
 			}
 			init := &Packet{
 				Type: MSG_TRANSFER_INIT,
@@ -91,5 +94,31 @@ func (s *Sender) Send(data []byte) {
 			}
 			conn.Send(init)
 		})
+		s.State = STATE_DATA
 	}
+
+	// Send data
+	s.forEachConn(func(i uint8, conn *Connection) {
+		connChunks, ok := chunkMaps[i]
+		if !ok || len(connChunks) == 0 {
+			conn.Send(&Packet{
+				Type:      MSG_COMPLETE,
+				SessionID: s.SessionID,
+				StreamID:  i,
+			})
+			return
+		}
+
+		chunk := connChunks[0]
+		chunkMaps[i] = connChunks[1:]
+
+		conn.Send(&Packet{
+			Type:      MSG_DATA,
+			Data:      chunk.Data,
+			Checksum:  chunk.Checksum,
+			SessionID: s.SessionID,
+			StreamID:  i,
+		})
+	})
+	s.State = STATE_IDLE
 }

@@ -82,7 +82,22 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 		}
 		go conn.handleReq(buf[:n])
 	}
+}
 
+func (conn *Connection) handleReq(buf []byte) {
+	packet, err := Deserialize(buf)
+	if err != nil {
+		log.Error("Error deserializing packet: ", err)
+		return
+	}
+	log.Debug("Received packet from ", conn.RemoteAddr, " type: ", packet.Type, " data: ", string(packet.Data))
+
+	packet, err = conn.handlePacket(packet)
+	if err != nil {
+		log.Error("Error handling packet: ", err)
+		return
+	}
+	conn.Send(packet)
 }
 
 func (m *Receiver) Close() {

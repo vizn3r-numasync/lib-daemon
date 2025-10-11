@@ -2,6 +2,8 @@ package dftp
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -16,6 +18,29 @@ var m sync.Mutex
 var (
 	PacketGenericError = fmt.Errorf("an errror has occured")
 )
+
+// handlePacket handles a packet received from the Connection.RemoteAddr.
+func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
+	log.Debug("Received type: ", packet.Type)
+	handler, ok := packetHandlers[packet.Type]
+	if !ok {
+		err := fmt.Errorf("No handler for packet type %d", packet.Type)
+		log.Error("Error handling packet: ", err)
+		return &Packet{
+			Type: MSG_ERROR,
+			Data: []byte(err.Error()),
+		}, err
+	}
+	packet, err := handler(packet, conn)
+	if err != nil {
+		log.Error("Error handling packet: ", err)
+		return &Packet{
+			Type: MSG_ERROR,
+			Data: []byte(err.Error()),
+		}, err
+	}
+	return packet, nil
+}
 
 func ErrorPacket(err error) *Packet {
 	return &Packet{Type: MSG_ERROR, Data: []byte(err.Error())}
@@ -40,6 +65,29 @@ func HandlePOGN(p *Packet, c *Connection) (*Packet, error) {
 func HandleTRANSFER_INIT(p *Packet, c *Connection) (*Packet, error) {
 	log.Debug("TRANSFER_INIT")
 	c.ConnState = STATE_DATA
+	rawList := string(p.Data)
+	chunkData := strings.SplitSeq(rawList, ";")
+	for chunk := range chunkData {
+		ch := strings.Split(chunk, ":")
+		id, err := strconv.ParseUint(ch[0], 10, 32)
+		chunkID := uint32(id)
+		if err != nil {
+			log.Error("Error parsing chunk id: ", err)
+			return ErrorPacket(err), err
+		}
+		checksum, err := strconv.ParseUint(ch[1], 10, 32)
+		chunkChecksum := uint32(checksum)
+		if err != nil {
+			log.Error("Error parsing chunk checksum: ", err)
+			return ErrorPacket(err), err
+		}
+
+		c.chunkMap[chunkID] = Chunk{
+			ID:       chunkID,
+			Checksum: chunkChecksum,
+			Data:     []byte{},
+		}
+	}
 
 	return nil, nil
 }
