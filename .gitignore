@@ -33,4 +33,5 @@ go.work.sum
 
 # Tests / benchmarks
 *bench*.txt
+test
 

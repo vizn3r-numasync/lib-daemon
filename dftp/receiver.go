@@ -92,9 +92,12 @@ func (m *Receiver) CloseAllConnections() {
 
 var recvBufferPool = sync.Pool{
 	New: func() any {
-		return make([]byte, PACKET_SIZE)
+		b := make([]byte, PACKET_SIZE)
+		return &b
 	},
 }
+
+var workerPool = make(chan struct{}, 1024)
 
 func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 	m.conn, err = net.ListenUDP("udp", m.LocalAddr)
@@ -109,8 +112,9 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 	}
 
 	for {
-		bufPtr := recvBufferPool.Get().([]byte)
-		n, addr, err := m.conn.ReadFromUDP(bufPtr)
+		bufPtr := recvBufferPool.Get().(*[]byte)
+		buf := *bufPtr
+		n, addr, err := m.conn.ReadFromUDP(buf)
 		if err != nil {
 			log.Error("Error reading from UDP socket: ", err)
 			continue
@@ -121,7 +125,7 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 			continue
 		}
 
-		packet, err := Deserialize(bufPtr[:n])
+		packet, err := Deserialize(buf[:n])
 		recvBufferPool.Put(bufPtr)
 		if err != nil {
 			log.Error("Error deserializing packet: ", err)
@@ -156,7 +160,7 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 		}
 
 		// Check remoteAddr
-		if stream.RemoteAddr.String() != addr.String() {
+		if !addr.IP.Equal(stream.RemoteAddr.IP) || addr.Port != stream.RemoteAddr.Port {
 			log.Error("Remote address mismatch for "+strconv.Itoa(int(stream.SessionID))+" expected ", stream.RemoteAddr, " got ", addr)
 			stream.Send(ErrorPacket(PacketGenericError))
 			continue
