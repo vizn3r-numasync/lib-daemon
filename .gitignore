@@ -32,5 +32,5 @@ go.work.sum
 # .vscode/
 
 # Tests / benchmarks
-bench*.txt
+*bench*.txt
 
