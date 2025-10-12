@@ -3,6 +3,7 @@ package dftp
 import (
 	"bytes"
 	"encoding/binary"
+	"sync"
 )
 
 type Chunk struct {
@@ -22,7 +23,10 @@ func NewChunkMap() map[uint32]*Chunk {
 	return make(map[uint32]*Chunk)
 }
 
-type Chunks []*Chunk
+type Chunks struct {
+	chunks []*Chunk
+	mu     sync.RWMutex
+}
 
 func NewChunkIDMap() map[uint32]*Chunk {
 	return make(map[uint32]*Chunk)
@@ -39,47 +43,90 @@ func ChunkIDMaptoStreamMap(chunkIDMap map[uint32]*Chunk, streamNum uint8) map[ui
 		if _, ok := chunkMaps[connID]; !ok {
 			chunkMaps[connID] = &Chunks{}
 		}
-		*chunkMaps[connID] = append(*chunkMaps[connID], chunk)
+		chunkMaps[connID].AddChunk(chunk)
 	}
 	return chunkMaps
 }
 
 func (c *Chunks) Serialize() []byte {
-	chunkMapData := bytes.NewBuffer([]byte{})
-	for _, chunk := range *c {
-		binary.Write(chunkMapData, binary.LittleEndian, chunk.ID)
-		chunkMapData.WriteString(":")
-		binary.Write(chunkMapData, binary.LittleEndian, chunk.Checksum)
-		chunkMapData.WriteString(";")
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	buf := bytes.NewBuffer(nil)
+
+	binary.Write(buf, binary.LittleEndian, uint32(len(c.chunks)))
+
+	for _, chunk := range c.chunks {
+		binary.Write(buf, binary.LittleEndian, chunk.ID)
+		binary.Write(buf, binary.LittleEndian, chunk.Checksum)
 	}
-	return chunkMapData.Bytes()
+	return buf.Bytes()
 }
 
-func (c *Chunks) Deserialize(data []byte) {
-	chunks := bytes.Split(data, []byte(";"))
-	for _, chunk := range chunks {
-		chunkID := binary.LittleEndian.Uint32(chunk[:4])
-		checksum := binary.LittleEndian.Uint32(chunk[4:8])
-		data := chunk[8:]
+func (c *Chunks) Deserialize(data []byte) error {
+	buf := bytes.NewBuffer(data)
+
+	var numChunks uint32
+	if err := binary.Read(buf, binary.LittleEndian, &numChunks); err != nil {
+		return err
+	}
+
+	for range numChunks {
+		var chunkID uint32
+		var checksum uint32
+		if err := binary.Read(buf, binary.LittleEndian, &chunkID); err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &checksum); err != nil {
+			return err
+		}
 		c.AddChunk(&Chunk{
 			ID:       chunkID,
 			Checksum: checksum,
-			Data:     data,
+			Data:     nil,
+			received: false,
 		})
 	}
+	return nil
 }
 
 func (c *Chunks) AddChunk(chunk *Chunk) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if _, ok := c.Get(chunk.ID); !ok {
-		*c = append(*c, chunk)
+		c.chunks = append(c.chunks, chunk)
 	}
 }
 
 func (c *Chunks) Get(chunkID uint32) (*Chunk, bool) {
-	for _, chunk := range *c {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, chunk := range c.chunks {
 		if chunk.ID == chunkID {
 			return chunk, true
 		}
 	}
 	return nil, false
+}
+
+func (c *Chunks) Remove(chunkID uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, chunk := range c.chunks {
+		if chunk.ID == chunkID {
+			c.chunks = append(c.chunks[:i], c.chunks[i+1:]...)
+			return
+		}
+	}
+}
+
+func (c *Chunks) Next() *Chunk {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, chunk := range c.chunks {
+		if !chunk.received {
+			chunk.received = true
+			return chunk
+		}
+	}
+	return nil
 }

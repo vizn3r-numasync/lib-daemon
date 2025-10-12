@@ -88,7 +88,30 @@ func (s *Sender) Send(data []byte) {
 
 	// Send data
 	s.forEachConn(func(i uint8, conn *Connection) error {
-		// TODO: IMPLEMENT!!!
+		go func(i uint8, conn *Connection) {
+			for {
+				chunk := chunkMaps[i].Next()
+				if chunk == nil {
+					data := &Packet{
+						Type: MSG_CHECK,
+						Data: nil,
+					}
+					if err := conn.Send(data); err != nil {
+						log.Error("Error sending check: ", err)
+						return
+					}
+					break
+				}
+				data := &Packet{
+					Type: MSG_DATA,
+					Data: chunk.Data,
+				}
+				if err := conn.Send(data); err != nil {
+					log.Error("Error sending data: ", err)
+					return
+				}
+			}
+		}(i, conn)
 		return nil
 	})
 	s.State = STATE_IDLE
