@@ -1,2 +1,4 @@
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/vizn3r/go-lib v1.0.0 h1:55xyxwhDafrcZxaKauUWjdjIPSpOH0THxsY6vSpU97g=
 github.com/vizn3r/go-lib v1.0.0/go.mod h1:mX4DsjzrR5g385FtqPw+FcbAL/TOx4fYsRgN5RuzLz4=

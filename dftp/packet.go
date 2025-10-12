@@ -45,13 +45,15 @@ func Deserialize(data []byte) (*Packet, error) {
 	if len(data) < HEADER_SIZE {
 		return nil, fmt.Errorf("deserialize: packet too short or invalid")
 	}
-	// TODO: Change this so it's correct
+
 	p.Type = MessageType(data[0])
+	p.StreamID = data[1]
 	p.Length = uint16(data[2])<<8 | uint16(data[3])
 	p.SessionID = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
 	p.ChunkNum = uint32(data[8])<<24 | uint32(data[9])<<16 | uint32(data[10])<<8 | uint32(data[11])
-	p.Checksum = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
-	p.Data = data[20:]
+	p.Checksum = uint32(data[12])<<24 | uint32(data[13])<<16 | uint32(data[14])<<8 | uint32(data[15])
+	p.Data = make([]byte, len(data[16:]))
+	copy(p.Data, data[16:])
 
 	//if err := p.Validate(); err != nil {
 	//	return err, nil
@@ -66,9 +68,9 @@ func (p *Packet) Serialize() []byte {
 		p.Length = uint16(len(p.Data))
 	}
 
-	// TODO: Change this so it's correct
 	data := make([]byte, HEADER_SIZE+len(p.Data))
 	data[0] = byte(p.Type)
+	data[1] = byte(p.StreamID)
 	data[2] = byte(p.Length >> 8)
 	data[3] = byte(p.Length)
 	data[4] = byte(p.SessionID >> 24)
@@ -79,11 +81,12 @@ func (p *Packet) Serialize() []byte {
 	data[9] = byte(p.ChunkNum >> 16)
 	data[10] = byte(p.ChunkNum >> 8)
 	data[11] = byte(p.ChunkNum)
-	data[16] = byte(p.Checksum >> 24)
-	data[17] = byte(p.Checksum >> 16)
-	data[18] = byte(p.Checksum >> 8)
-	data[19] = byte(p.Checksum)
-	copy(data[20:], p.Data)
+	data[12] = byte(p.Checksum >> 24)
+	data[13] = byte(p.Checksum >> 16)
+	data[14] = byte(p.Checksum >> 8)
+	data[15] = byte(p.Checksum)
+	copy(data[16:], p.Data)
+
 	return data
 }
 
@@ -125,14 +128,14 @@ func (p *Packet) String() string {
 	return ""
 }
 
-func (conn *Connection) NewPacketFromConn(t MessageType, f Flags, data []byte) *Packet {
+func (conn *Connection) NewPacketFromConn(t MessageType, data []byte) *Packet {
 	p := &Packet{
 		Type:     t,
 		StreamID: conn.ConnID,
 		Length:   uint16(len(data)),
-		Checksum: 0,
 		Data:     data,
 	}
-	p.CalcChecksum()
+	// Not yet
+	// p.CalcChecksum()
 	return p
 }

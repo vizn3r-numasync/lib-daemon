@@ -12,6 +12,8 @@ type PacketHander func(*Packet, *Connection) (*Packet, error)
 var packetHandlers = map[MessageType]PacketHander{
 	MSG_PIGN: HandlePIGN,
 	MSG_POGN: HandlePOGN,
+
+	MSG_ERROR: HandleERROR,
 }
 var m sync.Mutex
 
@@ -52,6 +54,12 @@ func RegisterPacketHandler(t MessageType, h PacketHander) {
 	m.Unlock()
 }
 
+func HandleERROR(p *Packet, c *Connection) (*Packet, error) {
+	log.Debug("ERROR")
+	log.Error("Error recieved: ", string(p.Data))
+	return nil, nil
+}
+
 func HandlePIGN(p *Packet, c *Connection) (*Packet, error) {
 	log.Debug("PIGN!")
 	return &Packet{Type: MSG_POGN, Data: []byte("POGN!")}, nil
@@ -64,7 +72,7 @@ func HandlePOGN(p *Packet, c *Connection) (*Packet, error) {
 
 func HandleTRANSFER_INIT(p *Packet, c *Connection) (*Packet, error) {
 	log.Debug("TRANSFER_INIT")
-	c.ConnState = STATE_DATA
+
 	rawList := string(p.Data)
 	chunkData := strings.SplitSeq(rawList, ";")
 	for chunk := range chunkData {
@@ -82,19 +90,22 @@ func HandleTRANSFER_INIT(p *Packet, c *Connection) (*Packet, error) {
 			return ErrorPacket(err), err
 		}
 
-		c.chunkMap[chunkID] = Chunk{
+		c.chunkMap[chunkID] = &Chunk{
 			ID:       chunkID,
 			Checksum: chunkChecksum,
 			Data:     []byte{},
+			received: false,
 		}
 	}
+
+	c.State = STATE_DATA
 
 	return nil, nil
 }
 
 func HandleDATA(p *Packet, c *Connection) (*Packet, error) {
 	log.Debug("DATA")
-	if c.ConnState != STATE_DATA {
+	if c.State != STATE_DATA {
 		log.Error("Data packet recieved, but conn is in wrong state")
 		return ErrorPacket(PacketGenericError), PacketGenericError
 	}

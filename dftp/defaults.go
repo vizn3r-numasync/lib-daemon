@@ -5,7 +5,7 @@ package dftp
 
 // Default values for the protocol
 const (
-	HEADER_SIZE = 20   // bytes
+	HEADER_SIZE = 16   // bytes
 	DATA_SIZE   = 1400 // bytes
 	PACKET_SIZE = HEADER_SIZE + DATA_SIZE
 	WINDOW_SIZE = 8 // bytes

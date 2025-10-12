@@ -2,8 +2,6 @@
 package dftp
 
 import (
-	"bytes"
-	"encoding/binary"
 	"net"
 )
 
@@ -15,12 +13,6 @@ type Sender struct {
 	Connections map[uint8]*Connection
 
 	maxConcurrent uint8
-}
-
-type Chunk struct {
-	ID       uint32
-	Checksum uint32
-	Data     []byte
 }
 
 func NewEmptySender() *Sender {
@@ -42,7 +34,9 @@ func NewSession(ip string, port int, maxConcurrent uint8) *Sender {
 	s.maxConcurrent = maxConcurrent
 
 	for i := range s.maxConcurrent {
-		conn, err := NewConn(ip, 0) // O so the port is random
+		conn, err := NewConn(ip, 0, 0) // O so the port is random
+		conn.SessionID = s.SessionID
+		conn.ConnID = uint8(i)
 		if err != nil {
 			log.Error("Error creating connection: ", err)
 			return nil
@@ -54,71 +48,48 @@ func NewSession(ip string, port int, maxConcurrent uint8) *Sender {
 	return s
 }
 
-func (s *Sender) forEachConn(f func(i uint8, conn *Connection)) {
+func (s *Sender) forEachConn(f func(i uint8, conn *Connection) error) error {
 	for j, c := range s.Connections {
-		f(j, c)
+		if err := f(j, c); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (s *Sender) Send(data []byte) {
-	chunks := map[uint32]Chunk{}
-	chunkMaps := map[uint8][]Chunk{}
+	chunks := NewChunkIDMap()
+	chunkMaps := NewChunkStreamMap()
 
 	if s.State != STATE_DATA {
 		// Prepare chunks
 		for chunkID := range uint32(len(data) / DATA_SIZE) {
-			chunks[chunkID] = Chunk{
+			chunks[chunkID] = &Chunk{
 				ID:       chunkID,
 				Checksum: 0,
 				Data:     data[chunkID*DATA_SIZE : (chunkID+1)*DATA_SIZE],
+				received: false,
 			}
 		}
 
-		// Make chunkmaps
-		for i := range chunks {
-			connID := uint8(i) % s.maxConcurrent
-			chunkMaps[connID] = append(chunkMaps[connID], chunks[i])
-		}
+		chunkMaps = ChunkIDMaptoStreamMap(chunks, s.maxConcurrent)
 
-		s.forEachConn(func(i uint8, conn *Connection) {
-			chunkMapData := bytes.NewBuffer([]byte{})
-			for _, chunk := range chunkMaps[i] {
-				binary.Write(chunkMapData, binary.LittleEndian, chunk.ID)
-				chunkMapData.WriteString(":")
-				binary.Write(chunkMapData, binary.LittleEndian, chunk.Checksum)
-				chunkMapData.WriteString(";")
-			}
+		s.forEachConn(func(i uint8, conn *Connection) error {
+			chunkMapData := chunkMaps[i].Serialize()
 			init := &Packet{
 				Type: MSG_TRANSFER_INIT,
-				Data: chunkMapData.Bytes(),
+				Data: chunkMapData,
 			}
-			conn.Send(init)
+			return conn.Send(init)
 		})
+
 		s.State = STATE_DATA
 	}
 
 	// Send data
-	s.forEachConn(func(i uint8, conn *Connection) {
-		connChunks, ok := chunkMaps[i]
-		if !ok || len(connChunks) == 0 {
-			conn.Send(&Packet{
-				Type:      MSG_COMPLETE,
-				SessionID: s.SessionID,
-				StreamID:  i,
-			})
-			return
-		}
-
-		chunk := connChunks[0]
-		chunkMaps[i] = connChunks[1:]
-
-		conn.Send(&Packet{
-			Type:      MSG_DATA,
-			Data:      chunk.Data,
-			Checksum:  chunk.Checksum,
-			SessionID: s.SessionID,
-			StreamID:  i,
-		})
+	s.forEachConn(func(i uint8, conn *Connection) error {
+		// TODO: IMPLEMENT!!!
+		return nil
 	})
 	s.State = STATE_IDLE
 }

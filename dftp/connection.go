@@ -8,26 +8,28 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type ConnState int
 
 type Connection struct {
-	ConnState
+	SessionID  uint32
 	ConnID     uint8
 	LocalAddr  *net.UDPAddr
 	RemoteAddr *net.UDPAddr
+	State      ConnState
 
-	// Chunk management
-	chunkMap map[uint32]Chunk
+	conn     *net.UDPConn
+	packet   chan *Packet
+	chunkMap map[uint32]*Chunk
 
-	conn   *net.UDPConn
-	packet chan *Packet
-
-	ready chan struct{}
-
+	ready  chan struct{}
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.RWMutex
 }
 
 const (
@@ -48,7 +50,7 @@ const (
 func NewEmptyConnection() *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Connection{
-		ConnState:  STATE_CLOSED,
+		State:      STATE_CLOSED,
 		LocalAddr:  nil,
 		RemoteAddr: nil,
 		conn:       nil,
@@ -78,10 +80,10 @@ func (conn *Connection) FlushPackets() {
 // Use this primarily for dialing.
 //
 // Can be used to dial or listen or both using the same methods (conn.Send() and conn.Receive()).
-func NewConn(ip string, port int) (conn *Connection, err error) {
+func NewConn(ip string, port int, sessionID uint32) (conn *Connection, err error) {
 	conn = NewEmptyConnection()
 
-	log.Info("Dialing ", ip, port)
+	log.Info("Dialing ", ip, ":", port)
 
 	conn.RemoteAddr = &net.UDPAddr{
 		IP:   net.ParseIP(ip),
@@ -92,6 +94,13 @@ func NewConn(ip string, port int) (conn *Connection, err error) {
 		IP:   net.ParseIP("127.0.0.1"),
 		Port: 0,
 	}
+
+	// This will be handled by server in the future
+	conn.SessionID = sessionID
+	if sessionID == 0 {
+		sessionID = uuid.New().ID()
+	}
+
 	conn.conn, err = net.ListenUDP("udp", localAddr)
 	if err != nil {
 		return nil, err
@@ -104,21 +113,42 @@ func NewConn(ip string, port int) (conn *Connection, err error) {
 	// Make sure receiver() started first
 	<-conn.ready
 
-	conn.ConnState = STATE_IDLE
+	conn.State = STATE_IDLE
 
 	log.Debug("Listening on: ", conn.LocalAddr)
 	return conn, nil
 }
 
 // Close closes a connection.
-func (conn *Connection) Close() error {
-	conn.ConnState = STATE_CLOSED
+func (conn *Connection) CloseWithoutConn() error {
+	log.Debug("Closing connection, sessionID: ", conn.SessionID)
+	conn.mu.Lock()
+	conn.State = STATE_CLOSED
 	conn.cancel()
+	log.Debug("Waiting for receiver to exit...")
+	conn.wg.Wait()
+	log.Debug("Receiver exited, closing channel")
 	close(conn.packet)
+	log.Debug("Connection closed")
+	conn.mu.Unlock()
+	return nil
+}
 
+// Close closes a connection.
+func (conn *Connection) Close() error {
+	log.Debug("Closing connection, sessionID: ", conn.SessionID)
+	conn.mu.Lock()
+	conn.State = STATE_CLOSED
+	conn.cancel()
 	if conn.conn != nil {
 		return conn.conn.Close()
 	}
+	log.Debug("Waiting for receiver to exit...")
+	conn.wg.Wait()
+	log.Debug("Receiver exited, closing channel")
+	close(conn.packet)
+	log.Debug("Connection closed")
+	conn.mu.Unlock()
 	return nil
 }
 
@@ -130,11 +160,19 @@ func (conn *Connection) Close() error {
 
 // Send sends a packet to the Connection.RemoteAddr.
 func (conn *Connection) Send(packet *Packet) error {
-	buf := packet.Serialize()
+	p := *packet
+
+	p.SessionID = conn.SessionID
+
+	buf := p.Serialize()
 
 	log.Debug("Sending from ", conn.LocalAddr, " to ", conn.RemoteAddr, " bytes: ", len(buf), " type: ", packet.Type, " data: ", string(packet.Data))
 
-	n, err := conn.conn.WriteToUDP(buf, conn.RemoteAddr)
+	conn.mu.RLock()
+	addr := conn.RemoteAddr
+	conn.mu.RUnlock()
+
+	n, err := conn.conn.WriteToUDP(buf, addr)
 	if err != nil {
 		log.Error("Error sending packet: ", err)
 		return err
@@ -165,19 +203,17 @@ func errIsClosed(err error) bool {
 	return false
 }
 
-var bufferPool = sync.Pool{
+var connBufferPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, PACKET_SIZE)
-		return &b
+		return make([]byte, PACKET_SIZE)
 	},
 }
 
 // receiver is the main loop for a connection.
 // It reads from the connection and sends the packet/s to the packet channel.
 func (conn *Connection) receiver() {
-	bufPtr := bufferPool.Get().(*[]byte)
-	buf := *bufPtr
-	defer bufferPool.Put(bufPtr)
+	conn.wg.Add(1)
+	defer conn.wg.Done()
 
 	close(conn.ready)
 
@@ -189,42 +225,49 @@ func (conn *Connection) receiver() {
 		default:
 		}
 
-		n, remoteAddr, err := conn.conn.ReadFromUDP(buf)
-		conn.RemoteAddr = remoteAddr
+		bufPtr := connBufferPool.Get().([]byte)
 
+		n, remoteAddr, err := conn.conn.ReadFromUDP(bufPtr)
 		if err != nil {
-			if conn.ctx.Err() != nil {
+			connBufferPool.Put(bufPtr)
+			if errIsClosed(err) || conn.State == STATE_CLOSED {
 				log.Info("Connection closed")
 				return
-
 			}
+
 			if err, ok := err.(*net.OpError); ok && err.Timeout() {
 				continue
-			}
-
-			if errIsClosed(err) || conn.ConnState == STATE_CLOSED {
-				log.Info("Connection closed")
-				return
 			}
 
 			log.Error("Error receiving from ", conn.RemoteAddr, "err: ", err)
 			return
 		}
+		if conn.ctx.Err() != nil {
+			log.Info("Connection closed")
+			return
+		}
+
+		if conn.RemoteAddr == nil {
+			conn.mu.Lock()
+			conn.RemoteAddr = remoteAddr
+			conn.mu.Unlock()
+		}
 
 		log.Debug("Received ", n, " bytes from ", conn.RemoteAddr)
 
-		packet, err := Deserialize(buf[:n])
+		packet, err := Deserialize(bufPtr[:n])
+		connBufferPool.Put(bufPtr)
 		if err != nil {
 			log.Error("Error deserializing packet: ", err)
 			return
 		}
 
 		select {
-		case conn.packet <- packet:
-			log.Debug("Putting packet in channel: ", string(packet.Data))
 		case <-conn.ctx.Done():
 			log.Info("Connection closed while receiving packet")
 			return
+		case conn.packet <- packet:
+			log.Debug("Putting packet in channel: ", string(packet.Data))
 		default:
 			log.Warn("Packet queue full")
 		}

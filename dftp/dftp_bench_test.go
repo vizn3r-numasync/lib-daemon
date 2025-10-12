@@ -8,6 +8,7 @@ import (
 )
 
 var m *dftp.Receiver
+var id uint32 = 0
 
 func init() {
 	dftp.RegisterPacketHandler(dftp.MSG_PIGN, func(p *dftp.Packet, c *dftp.Connection) (*dftp.Packet, error) {
@@ -19,17 +20,18 @@ func init() {
 	dftp.RegisterPacketHandler(dftp.MSG_POGN, func(p *dftp.Packet, c *dftp.Connection) (*dftp.Packet, error) {
 		return nil, nil // Don't reply to responses
 	})
-	time.Sleep(time.Millisecond * 100)
+	m = dftp.NewReceiver("127.0.0.1", 3387)
 	go func() {
-		m = dftp.NewReceiver("127.0.0.1", 3387)
 		if err := m.Listen(nil); err != nil {
 			panic(err)
 		}
 	}()
+	time.Sleep(time.Millisecond * 100)
 }
 
 func BenchmarkSingleRequest(b *testing.B) {
 	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: []byte("PIGN!"),
@@ -37,14 +39,18 @@ func BenchmarkSingleRequest(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		conn, _ := dftp.NewConn("127.0.0.1", 3387)
+		id++
+		conn, _ := dftp.NewConn("127.0.0.1", 3387, id)
 		conn.Send(p)
 		conn.Recv()
 		conn.Close()
 	}
+	m.CloseAllConnections()
 }
 
 func BenchmarkConcurrent(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: []byte("PIGN!"),
@@ -53,15 +59,19 @@ func BenchmarkConcurrent(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			conn, _ := dftp.NewConn("127.0.0.1", 3387)
+			id++
+			conn, _ := dftp.NewConn("127.0.0.1", 3387, id)
 			conn.Send(p)
 			conn.Recv()
 			conn.Close()
 		}
 	})
+	m.CloseAllConnections()
 }
 
 func BenchmarkWithPool(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: []byte("PIGN!"),
@@ -71,7 +81,8 @@ func BenchmarkWithPool(b *testing.B) {
 	poolSize := 10
 	conns := make([]*dftp.Connection, poolSize)
 	for i := range conns {
-		conns[i], _ = dftp.NewConn("127.0.0.1", 3387)
+		id++
+		conns[i], _ = dftp.NewConn("127.0.0.1", 3387, id)
 	}
 	defer func() {
 		for _, c := range conns {
@@ -85,26 +96,33 @@ func BenchmarkWithPool(b *testing.B) {
 		conn.Send(p)
 		conn.Recv()
 	}
+	m.CloseAllConnections()
 }
 
 // BenchmarkSingleRequest1400B benchmarks a single packet of 1400 bytes.
 
 func BenchmarkSingleRequest1400B(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: make([]byte, 1400), // Full packet
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		conn, _ := dftp.NewConn("127.0.0.1", 3387)
+	for b.Loop() {
+		id++
+		conn, _ := dftp.NewConn("127.0.0.1", 3387, id)
 		conn.Send(p)
 		conn.Recv()
 		conn.Close()
 	}
+	m.CloseAllConnections()
 }
 
 func BenchmarkConcurrent1400B(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: make([]byte, 1400),
@@ -113,15 +131,19 @@ func BenchmarkConcurrent1400B(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			conn, _ := dftp.NewConn("127.0.0.1", 3387)
+			id++
+			conn, _ := dftp.NewConn("127.0.0.1", 3387, id)
 			conn.Send(p)
 			conn.Recv()
 			conn.Close()
 		}
 	})
+	m.CloseAllConnections()
 }
 
 func BenchmarkWithPool1400B(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	id = 0
 	p := &dftp.Packet{
 		Type: dftp.MSG_PIGN,
 		Data: make([]byte, 1400),
@@ -130,7 +152,8 @@ func BenchmarkWithPool1400B(b *testing.B) {
 	poolSize := 10
 	conns := make([]*dftp.Connection, poolSize)
 	for i := range conns {
-		conns[i], _ = dftp.NewConn("127.0.0.1", 3387)
+		id++
+		conns[i], _ = dftp.NewConn("127.0.0.1", 3387, id)
 	}
 	defer func() {
 		for _, c := range conns {
@@ -139,9 +162,10 @@ func BenchmarkWithPool1400B(b *testing.B) {
 	}()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		conn := conns[i%poolSize]
 		conn.Send(p)
 		conn.Recv()
 	}
+	m.CloseAllConnections()
 }
