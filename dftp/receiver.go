@@ -78,15 +78,7 @@ func (m *Receiver) CloseConnection(sessionID uint32) {
 }
 
 func (m *Receiver) CloseAllConnections() {
-	m.conns.Range(func(key, value any) bool {
-		value.(*RecvConn).streams.Range(func(key, value any) bool {
-			value.(*Connection).CloseWithoutConn()
-			return true
-		})
-		value.(*RecvConn).streams.Clear()
-		usedSessionIDs.Delete(key)
-		return true
-	})
+	// Turns out I don't need to do it C style :P
 	m.conns.Clear()
 }
 
