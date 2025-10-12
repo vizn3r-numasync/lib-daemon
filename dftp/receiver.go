@@ -4,6 +4,7 @@ package dftp
 
 import (
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/vizn3r/go-lib/logger"
@@ -19,7 +20,7 @@ func init() {
 type Receiver struct {
 	LocalAddr *net.UDPAddr
 
-	conns map[uint32]*RecvConn
+	conns sync.Map
 	conn  *net.UDPConn
 
 	mu sync.RWMutex
@@ -27,7 +28,7 @@ type Receiver struct {
 
 type RecvConn struct {
 	*Connection
-	streams map[uint8]*Connection
+	streams sync.Map
 }
 
 func NewReceiver(host string, port int) *Receiver {
@@ -37,7 +38,7 @@ func NewReceiver(host string, port int) *Receiver {
 	}
 	return &Receiver{
 		LocalAddr: addr,
-		conns:     make(map[uint32]*RecvConn),
+		conns:     sync.Map{},
 	}
 }
 
@@ -60,30 +61,33 @@ func (m *Receiver) NewRecvStream(addr *net.UDPAddr, sessionID uint32, streamID u
 func (m *Receiver) NewRecvConn() *RecvConn {
 	return &RecvConn{
 		Connection: NewEmptyConnection(),
-		streams:    make(map[uint8]*Connection),
+		streams:    sync.Map{},
 	}
 }
 
 func (m *Receiver) GetConnections(sessionID uint32) *RecvConn {
-	return m.conns[sessionID]
+	conn, ok := m.conns.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	return conn.(*RecvConn)
 }
 
 func (m *Receiver) CloseConnection(sessionID uint32) {
-	m.forEachConn(sessionID, func(conn *Connection) error {
-		conn.Close()
-		return nil
-	})
-	delete(m.conns, sessionID)
+	// TODO: implement
 }
 
 func (m *Receiver) CloseAllConnections() {
-	for sessionID, conn := range m.conns {
-		for streamID, stream := range conn.streams {
-			delete(conn.streams, streamID)
-			stream.CloseWithoutConn()
-		}
-		delete(m.conns, sessionID)
-	}
+	m.conns.Range(func(key, value any) bool {
+		value.(*RecvConn).streams.Range(func(key, value any) bool {
+			value.(*Connection).CloseWithoutConn()
+			return true
+		})
+		value.(*RecvConn).streams.Clear()
+		usedSessionIDs.Delete(key)
+		return true
+	})
+	m.conns.Clear()
 }
 
 var recvBufferPool = sync.Pool{
@@ -134,30 +138,26 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 			continue
 		}
 
-		m.mu.RLock()
-		recvConn, ok := m.conns[sessionID]
-		m.mu.RUnlock()
+		v, ok := m.conns.Load(sessionID)
 		if !ok {
-			m.mu.Lock()
-			recvConn = m.NewRecvConn()
-			m.conns[sessionID] = recvConn
-			m.mu.Unlock()
+			v = m.NewRecvConn()
+			m.conns.Store(sessionID, v)
 		}
+		recvConn := v.(*RecvConn)
 
-		m.mu.RLock()
-		stream, ok := recvConn.streams[streamID]
-		m.mu.RUnlock()
+		var stream *Connection
+		v, ok = recvConn.streams.Load(streamID)
 		if !ok {
-			m.mu.Lock()
 			stream = m.NewRecvStream(addr, sessionID, streamID)
 			stream.SessionID = sessionID
-			m.conns[sessionID].streams[streamID] = stream
-			m.mu.Unlock()
+			recvConn.streams.Store(streamID, stream)
+		} else {
+			stream = v.(*Connection)
 		}
 
 		// Check remoteAddr
 		if stream.RemoteAddr.String() != addr.String() {
-			log.Error("Remote address mismatch")
+			log.Error("Remote address mismatch for "+strconv.Itoa(int(stream.SessionID))+" expected ", stream.RemoteAddr, " got ", addr)
 			stream.Send(ErrorPacket(PacketGenericError))
 			continue
 		}
@@ -167,7 +167,17 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 }
 
 func (m *Receiver) forEachConn(sessionID uint32, f func(*Connection) error) error {
-	// TODO: implement
+	v, ok := m.conns.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	conn := v.(*RecvConn)
+	conn.streams.Range(func(key, value any) bool {
+		if err := f(value.(*Connection)); err != nil {
+			return false
+		}
+		return true
+	})
 	return nil
 }
 
@@ -183,10 +193,14 @@ func (conn *Connection) handleReq(packet *Packet) {
 }
 
 func (m *Receiver) Close() {
-	for _, conn := range m.conns {
-		for _, stream := range conn.streams {
-			stream.Close()
-		}
-	}
-	// TODO: close conn
+	m.conns.Range(func(key, value any) bool {
+		value.(*RecvConn).streams.Range(func(key, value any) bool {
+			value.(*Connection).Close()
+			return true
+		})
+		value.(*RecvConn).streams.Clear()
+		usedSessionIDs.Delete(key)
+		return true
+	})
+	m.conns.Clear()
 }

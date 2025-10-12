@@ -6,10 +6,11 @@ package dftp
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"sync"
 
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid"
 )
 
 type ConnState int
@@ -73,6 +74,8 @@ func (conn *Connection) FlushPackets() {
 	}
 }
 
+var usedSessionIDs = sync.Map{}
+
 // NewConn creates a new UDP connection to the given IP and port.
 //
 // For multiple connection listening, use ConnManager.Listen() instead.
@@ -82,8 +85,6 @@ func (conn *Connection) FlushPackets() {
 // Can be used to dial or listen or both using the same methods (conn.Send() and conn.Receive()).
 func NewConn(ip string, port int, sessionID uint32) (conn *Connection, err error) {
 	conn = NewEmptyConnection()
-
-	log.Info("Dialing ", ip, ":", port)
 
 	conn.RemoteAddr = &net.UDPAddr{
 		IP:   net.ParseIP(ip),
@@ -96,10 +97,23 @@ func NewConn(ip string, port int, sessionID uint32) (conn *Connection, err error
 	}
 
 	// This will be handled by server in the future
-	conn.SessionID = sessionID
 	if sessionID == 0 {
-		sessionID = uuid.New().ID()
+		for {
+			uuid := uuid.Must(uuid.NewV4())
+			h := fnv.New32a()
+			h.Write(uuid[:])
+			if _, ok := usedSessionIDs.Load(h.Sum32()); ok {
+				continue
+			}
+			conn.SessionID = h.Sum32()
+			usedSessionIDs.Store(conn.SessionID, true)
+			break
+		}
+	} else {
+		conn.SessionID = sessionID
 	}
+
+	log.Info("Dialing ", ip, ":", port, " sessionID: ", conn.SessionID)
 
 	conn.conn, err = net.ListenUDP("udp", localAddr)
 	if err != nil {
@@ -141,7 +155,12 @@ func (conn *Connection) Close() error {
 	conn.State = STATE_CLOSED
 	conn.cancel()
 	if conn.conn != nil {
-		return conn.conn.Close()
+		err := conn.conn.Close()
+		if err != nil {
+			conn.mu.Unlock()
+			log.Error("Error closing connection: ", err)
+			return err
+		}
 	}
 	log.Debug("Waiting for receiver to exit...")
 	conn.wg.Wait()
