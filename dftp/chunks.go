@@ -104,12 +104,12 @@ func (c *Chunks) DeserializeMap(data []byte) error {
 }
 
 // chunkID - checksum map
-func (c *Chunks) ChunkMap() map[uint32]string {
+func (c *Chunks) ChunkMap() map[uint32]uint32 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	chunkMap := make(map[uint32]string)
+	chunkMap := make(map[uint32]uint32)
 	for _, chunk := range c.chunks {
-		chunkMap[chunk.ID] = string(chunk.Checksum)
+		chunkMap[chunk.ID] = chunk.Checksum
 	}
 	return chunkMap
 }
@@ -123,8 +123,6 @@ func (c *Chunks) AddChunk(chunk *Chunk) {
 }
 
 func (c *Chunks) Get(chunkID uint32) (*Chunk, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	for _, chunk := range c.chunks {
 		if chunk.ID == chunkID {
 			return chunk, true

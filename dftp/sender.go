@@ -3,7 +3,11 @@ package dftp
 
 import (
 	"encoding/binary"
+	"hash/fnv"
 	"net"
+
+	"github.com/gofrs/uuid"
+	"github.com/vizn3r/go-lib/logger"
 )
 
 type Sender struct {
@@ -25,23 +29,46 @@ func NewEmptySender() *Sender {
 	}
 }
 
-func NewSession(ip string, port int, maxConcurrent uint8) *Sender {
+var sendl = logger.New("SNDR", logger.Blue)
+
+func NewSession(ip string, port int, sessionID uint32, maxConcurrent uint8) *Sender {
 	if maxConcurrent < 1 {
-		log.Warn("maxConcurrent must be at least 1, setting to 1")
+		sendl.Warn("maxConcurrent must be at least 1, setting to 1")
 		maxConcurrent = 1
 	}
 	s := NewEmptySender()
 	s.RemoteAddr = &net.UDPAddr{IP: net.ParseIP(ip), Port: port}
 	s.maxConcurrent = maxConcurrent
 
+	if sessionID == 0 {
+		for {
+			uuid := uuid.Must(uuid.NewV4())
+			h := fnv.New32a()
+			h.Write(uuid[:])
+			if _, ok := usedSessionIDs.Load(h.Sum32()); ok {
+				continue
+			}
+			s.SessionID = h.Sum32()
+			usedSessionIDs.Store(s.SessionID, true)
+			break
+		}
+	} else {
+		s.SessionID = sessionID
+	}
+
+	sendl.Debug("Creating ", maxConcurrent, " connections for ", ip, ":", port)
 	for i := range s.maxConcurrent {
-		conn, err := NewConn(ip, 0, 0) // O so the port is random
-		conn.SessionID = s.SessionID
-		conn.ConnID = uint8(i)
+		conn, err := NewConn(ip, 0, s.SessionID)
 		if err != nil {
-			log.Error("Error creating connection: ", err)
+			sendl.Error("Error creating connection: ", err)
 			return nil
 		}
+
+		conn.SessionID = s.SessionID
+		conn.ConnID = uint8(i)
+		conn.RemoteAddr = s.RemoteAddr
+
+		sendl.Debug("Created connection connID: ", conn.ConnID, " for ", ip, ":", port, " sessionID: ", s.SessionID)
 		s.Connections[i] = conn
 	}
 
@@ -62,8 +89,11 @@ func (s *Sender) Send(data []byte) {
 	chunks := NewChunkMap()
 	chunkMaps := NewChunksMap()
 
+	sendl.Debug("Preparing ", len(data), " bytes for ", s.RemoteAddr, " seessionID: ", s.SessionID)
+
 	if s.State != STATE_DATA {
 		// Prepare chunks
+		sendl.Debug("Preparing chunks")
 		for chunkID := range uint32(len(data) / DATA_SIZE) {
 			chunks[chunkID] = &Chunk{
 				ID:       chunkID,
@@ -73,11 +103,13 @@ func (s *Sender) Send(data []byte) {
 			}
 		}
 
+		sendl.Debug("Preparing chunk maps")
 		chunkMaps = ChunkIDMaptoStreamMap(chunks, s.maxConcurrent)
 
 		s.forEachConn(func(i uint8, conn *Connection) error {
 			chunkMapData := chunkMaps[i].SerializeMap()
 			numPackets := (len(chunkMapData) + PACKET_SIZE - 1) / PACKET_SIZE
+			sendl.Debug("Number of packets: ", numPackets)
 			for i := range numPackets {
 				start := i * PACKET_SIZE
 				end := min(start+PACKET_SIZE, len(chunkMapData))
@@ -94,8 +126,9 @@ func (s *Sender) Send(data []byte) {
 					packet.Data = buf
 				}
 
+				sendl.Debug("Sending packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
 				if err := conn.Send(packet); err != nil {
-					log.Error("Error sending transfer init: ", err)
+					sendl.Error("Error sending transfer init: ", err)
 					return err
 				}
 			}
@@ -116,7 +149,7 @@ func (s *Sender) Send(data []byte) {
 						Data: nil,
 					}
 					if err := conn.Send(data); err != nil {
-						log.Error("Error sending check: ", err)
+						sendl.Error("Error sending check: ", err)
 						return
 					}
 					break
@@ -125,8 +158,10 @@ func (s *Sender) Send(data []byte) {
 					Type: MSG_DATA,
 					Data: chunk.Data,
 				}
+
+				sendl.Debug("Sending packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
 				if err := conn.Send(data); err != nil {
-					log.Error("Error sending data: ", err)
+					sendl.Error("Error sending data: ", err)
 					return
 				}
 			}

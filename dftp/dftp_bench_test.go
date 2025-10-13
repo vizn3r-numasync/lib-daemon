@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	_ "embed"
+
 	"github.com/vizn3r-numasync/lib-numa/dftp"
 )
 
@@ -26,6 +28,15 @@ func init() {
 		}
 	}()
 	time.Sleep(time.Millisecond * 100)
+}
+
+//go:embed test.txt
+var text []byte
+
+func BenchmarkTransferInit(b *testing.B) {
+	time.Sleep(time.Millisecond * 100)
+	s := dftp.NewSession("127.0.0.1", 3387, 0, 4)
+	s.Send(text)
 }
 
 func BenchmarkSingleRequest(b *testing.B) {

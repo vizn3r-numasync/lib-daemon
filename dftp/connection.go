@@ -11,7 +11,11 @@ import (
 	"sync"
 
 	"github.com/gofrs/uuid"
+	"github.com/vizn3r/go-lib/logger"
 )
+
+var connl = logger.New("CONN", logger.Magenta)
+var log = logger.New("DFTP", logger.Cyan)
 
 type ConnState int
 
@@ -67,7 +71,7 @@ func (conn *Connection) FlushPackets() {
 	for {
 		select {
 		case packet := <-conn.packet:
-			log.Warn("Flushing packet ", packet.Type)
+			connl.Warn("Flushing packet ", packet.Type)
 		default:
 			return
 		}
@@ -113,14 +117,14 @@ func NewConn(ip string, port int, sessionID uint32) (conn *Connection, err error
 		conn.SessionID = sessionID
 	}
 
-	log.Info("Dialing ", ip, ":", port, " sessionID: ", conn.SessionID)
-
 	conn.conn, err = net.ListenUDP("udp", localAddr)
 	if err != nil {
 		return nil, err
 	}
 
 	conn.LocalAddr = conn.conn.LocalAddr().(*net.UDPAddr)
+
+	connl.Info("New conn to: ", ip, ":", port, " sessionID: ", conn.SessionID, " from: ", conn.LocalAddr.String(), " connID: ", conn.ConnID)
 
 	go conn.receiver()
 
@@ -129,28 +133,28 @@ func NewConn(ip string, port int, sessionID uint32) (conn *Connection, err error
 
 	conn.State = STATE_IDLE
 
-	log.Debug("Listening on: ", conn.LocalAddr)
+	connl.Debug("Listening on: ", conn.LocalAddr)
 	return conn, nil
 }
 
 // Close closes a connection.
 func (conn *Connection) CloseWithoutConn() error {
-	log.Debug("Closing connection, sessionID: ", conn.SessionID)
+	connl.Debug("Closing connection, sessionID: ", conn.SessionID)
 	conn.mu.Lock()
 	conn.State = STATE_CLOSED
 	conn.cancel()
-	log.Debug("Waiting for receiver to exit...")
+	connl.Debug("Waiting for receiver to exit...")
 	conn.wg.Wait()
-	log.Debug("Receiver exited, closing channel")
+	connl.Debug("Receiver exited, closing channel")
 	close(conn.packet)
-	log.Debug("Connection closed")
+	connl.Debug("Connection closed")
 	conn.mu.Unlock()
 	return nil
 }
 
 // Close closes a connection.
 func (conn *Connection) Close() error {
-	log.Debug("Closing connection, sessionID: ", conn.SessionID)
+	connl.Debug("Closing connection, sessionID: ", conn.SessionID)
 	conn.mu.Lock()
 	conn.State = STATE_CLOSED
 	conn.cancel()
@@ -158,15 +162,15 @@ func (conn *Connection) Close() error {
 		err := conn.conn.Close()
 		if err != nil {
 			conn.mu.Unlock()
-			log.Error("Error closing connection: ", err)
+			connl.Error("Error closing connection: ", err)
 			return err
 		}
 	}
-	log.Debug("Waiting for receiver to exit...")
+	connl.Debug("Waiting for receiver to exit...")
 	conn.wg.Wait()
-	log.Debug("Receiver exited, closing channel")
+	connl.Debug("Receiver exited, closing channel")
 	close(conn.packet)
-	log.Debug("Connection closed")
+	connl.Debug("Connection closed")
 	conn.mu.Unlock()
 	return nil
 }
@@ -179,13 +183,9 @@ func (conn *Connection) Close() error {
 
 // Send sends a packet to the Connection.RemoteAddr.
 func (conn *Connection) Send(packet *Packet) error {
-	p := *packet
+	buf := packet.Serialize()
 
-	p.SessionID = conn.SessionID
-
-	buf := p.Serialize()
-
-	log.Debug("Sending from ", conn.LocalAddr, " to ", conn.RemoteAddr, " bytes: ", len(buf), " type: ", packet.Type, " data: ", string(packet.Data))
+	connl.Debug("Sending from ", conn.LocalAddr, " to ", conn.RemoteAddr, " bytes: ", len(buf), " type: ", packet.Type)
 
 	conn.mu.RLock()
 	addr := conn.RemoteAddr
@@ -193,10 +193,10 @@ func (conn *Connection) Send(packet *Packet) error {
 
 	n, err := conn.conn.WriteToUDP(buf, addr)
 	if err != nil {
-		log.Error("Error sending packet: ", err)
+		connl.Error("Error sending packet: ", err)
 		return err
 	}
-	log.Debug("Sent ", n, " bytes to ", conn.RemoteAddr)
+	connl.Debug("Sent ", n, " bytes to ", conn.RemoteAddr)
 
 	return nil
 }
@@ -239,7 +239,7 @@ func (conn *Connection) receiver() {
 	for {
 		select {
 		case <-conn.ctx.Done():
-			log.Info("Connection closed")
+			connl.Info("Connection closed")
 			return
 		default:
 		}
@@ -250,7 +250,7 @@ func (conn *Connection) receiver() {
 		if err != nil {
 			connBufferPool.Put(bufPtr)
 			if errIsClosed(err) || conn.State == STATE_CLOSED {
-				log.Info("Connection closed")
+				connl.Info("Connection closed")
 				return
 			}
 
@@ -258,11 +258,11 @@ func (conn *Connection) receiver() {
 				continue
 			}
 
-			log.Error("Error receiving from ", conn.RemoteAddr, "err: ", err)
+			connl.Error("Error receiving from ", conn.RemoteAddr, "err: ", err)
 			return
 		}
 		if conn.ctx.Err() != nil {
-			log.Info("Connection closed")
+			connl.Info("Connection closed")
 			return
 		}
 
@@ -272,37 +272,37 @@ func (conn *Connection) receiver() {
 			conn.mu.Unlock()
 		}
 
-		log.Debug("Received ", n, " bytes from ", conn.RemoteAddr)
+		connl.Debug("Received ", n, " bytes from ", conn.RemoteAddr)
 
 		packet, err := Deserialize(bufPtr[:n])
 		connBufferPool.Put(bufPtr)
 		if err != nil {
-			log.Error("Error deserializing packet: ", err)
+			connl.Error("Error deserializing packet: ", err)
 			return
 		}
 
 		select {
 		case <-conn.ctx.Done():
-			log.Info("Connection closed while receiving packet")
+			connl.Info("Connection closed while receiving packet")
 			return
 		case conn.packet <- packet:
-			log.Debug("Putting packet in channel: ", string(packet.Data))
+			connl.Debug("Putting packet in channel: ", string(packet.Data))
 		default:
-			log.Warn("Packet queue full")
+			connl.Warn("Packet queue full")
 		}
 
-		log.Info("Received: ", string(packet.Data))
+		connl.Info("Received: ", string(packet.Data))
 
 		npacket, err := conn.handlePacket(packet)
 		if err != nil {
-			log.Error("Error handling packet: ", err)
+			connl.Error("Error handling packet: ", err)
 			return
 		}
 
 		if npacket != nil {
 			err = conn.Send(npacket)
 			if err != nil {
-				log.Error("Error sending packet: ", err)
+				connl.Error("Error sending packet: ", err)
 				return
 			}
 		}

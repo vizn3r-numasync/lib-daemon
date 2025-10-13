@@ -10,12 +10,7 @@ import (
 	"github.com/vizn3r/go-lib/logger"
 )
 
-var log *logger.Logger
-
-func init() {
-	log = logger.New("DFTP", logger.Cyan)
-	//log.SetLevel(logger.LevelError)
-}
+var recvl = logger.New("RCVR", logger.Green)
 
 type Receiver struct {
 	LocalAddr *net.UDPAddr
@@ -45,7 +40,7 @@ func NewReceiver(host string, port int) *Receiver {
 func (m *Receiver) NewRecvStream(addr *net.UDPAddr, sessionID uint32, streamID uint8) *Connection {
 	conn := NewEmptyConnection()
 
-	log.Debug("Creating new stream - addr: ", addr, " sessionID: ", sessionID, " streamID: ", streamID)
+	recvl.Debug("Creating new stream - addr: ", addr, " sessionID: ", sessionID, " streamID: ", streamID)
 
 	conn.RemoteAddr = addr
 	conn.LocalAddr = m.LocalAddr
@@ -97,7 +92,7 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 		return err
 	}
 
-	log.Info("Listening on ", m.LocalAddr)
+	recvl.Info("Listening on ", m.LocalAddr)
 
 	if ready != nil {
 		ready <- struct{}{}
@@ -108,29 +103,29 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 		buf := *bufPtr
 		n, addr, err := m.conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Error("Error reading from UDP socket: ", err)
+			recvl.Error("Error reading from UDP socket: ", err)
 			continue
 		}
 
 		if n == 0 {
-			log.Error("Received empty packet")
+			recvl.Error("Received empty packet")
 			continue
 		}
 
 		packet, err := Deserialize(buf[:n])
 		recvBufferPool.Put(bufPtr)
 		if err != nil {
-			log.Error("Error deserializing packet: ", err)
+			recvl.Error("Error deserializing packet: ", err)
 			continue
 		}
 
 		sessionID := packet.SessionID
 		streamID := packet.StreamID
 
-		log.Debug("Received packet - SessionID: ", sessionID, " StreamID: ", streamID, " Type: ", packet.Type)
+		recvl.Debug("Received packet from: "+addr.String()+" type: ", packet.Type)
 
 		if sessionID == 0 {
-			log.Error("Invalid session ID: ", sessionID)
+			recvl.Error("Invalid session ID: ", sessionID)
 			continue
 		}
 
@@ -152,9 +147,9 @@ func (m *Receiver) Listen(ready chan<- struct{}) (err error) {
 		}
 
 		// Check remoteAddr
-		if !addr.IP.Equal(stream.RemoteAddr.IP) || addr.Port != stream.RemoteAddr.Port {
-			log.Error("Remote address mismatch for "+strconv.Itoa(int(stream.SessionID))+" expected ", stream.RemoteAddr, " got ", addr)
-			stream.Send(ErrorPacket(PacketGenericError))
+		if addr.String() != stream.RemoteAddr.String() {
+			recvl.Error("Remote address mismatch for "+strconv.Itoa(int(stream.SessionID))+" expected ", stream.RemoteAddr, " got ", addr)
+			stream.Send(ErrorPacket(PacketInvalidAddressError))
 			continue
 		}
 
@@ -178,11 +173,11 @@ func (m *Receiver) forEachConn(sessionID uint32, f func(*Connection) error) erro
 }
 
 func (conn *Connection) handleReq(packet *Packet) {
-	log.Debug("Received packet from ", conn.RemoteAddr, " type: ", packet.Type, " data: ", string(packet.Data))
+	recvl.Debug("Received packet from ", conn.RemoteAddr, " type: ", packet.Type)
 
 	resp, err := conn.handlePacket(packet)
 	if err != nil {
-		log.Error("Error handling packet: ", err)
+		recvl.Error("Error handling packet: ", err)
 		return
 	}
 	conn.Send(resp)
