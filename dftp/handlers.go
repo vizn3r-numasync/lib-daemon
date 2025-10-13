@@ -1,13 +1,22 @@
 package dftp
 
 import (
+	"encoding/binary"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 )
 
 type PacketHander func(*Packet, *Connection) (*Packet, error)
+
+type DataHandler struct {
+	SessionID uint32
+
+	expectedInitPackets uint32
+	receivedInitPackets uint32
+	initBuf             []byte
+
+	ChunkMap map[uint32]string // ID -> checksum
+}
 
 var packetHandlers = map[MessageType]PacketHander{
 	MSG_PIGN: HandlePIGN,
@@ -15,11 +24,26 @@ var packetHandlers = map[MessageType]PacketHander{
 
 	MSG_ERROR: HandleERROR,
 }
+
+var dataHandlers = map[uint32]*DataHandler{}
+
 var m sync.Mutex
 
 var (
 	PacketGenericError = fmt.Errorf("an errror has occured")
 )
+
+func NewDataHandler(sessionID uint32) *DataHandler {
+	dh := &DataHandler{
+		SessionID:           sessionID,
+		initBuf:             make([]byte, DATA_SIZE+4),
+		expectedInitPackets: 1,
+		receivedInitPackets: 0,
+		ChunkMap:            make(map[uint32]string),
+	}
+	dataHandlers[sessionID] = dh
+	return dh
+}
 
 // handlePacket handles a packet received from the Connection.RemoteAddr.
 func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
@@ -70,35 +94,33 @@ func HandlePOGN(p *Packet, c *Connection) (*Packet, error) {
 	return nil, nil
 }
 
+// Data stuff
+
 func HandleTRANSFER_INIT(p *Packet, c *Connection) (*Packet, error) {
 	log.Debug("TRANSFER_INIT")
 
-	rawList := string(p.Data)
-	chunkData := strings.SplitSeq(rawList, ";")
-	for chunk := range chunkData {
-		ch := strings.Split(chunk, ":")
-		id, err := strconv.ParseUint(ch[0], 10, 32)
-		chunkID := uint32(id)
-		if err != nil {
-			log.Error("Error parsing chunk id: ", err)
-			return ErrorPacket(err), err
-		}
-		checksum, err := strconv.ParseUint(ch[1], 10, 32)
-		chunkChecksum := uint32(checksum)
-		if err != nil {
-			log.Error("Error parsing chunk checksum: ", err)
-			return ErrorPacket(err), err
-		}
-
-		c.chunkMap[chunkID] = &Chunk{
-			ID:       chunkID,
-			Checksum: chunkChecksum,
-			Data:     []byte{},
-			received: false,
-		}
+	dh, ok := dataHandlers[c.SessionID]
+	if !ok {
+		dh = NewDataHandler(c.SessionID)
 	}
 
-	c.State = STATE_DATA
+	if p.ChunkNum == 0 {
+		numPackets := binary.LittleEndian.Uint32(p.Data[0:4])
+		dh.expectedInitPackets = numPackets
+		dh.initBuf = append(dh.initBuf, p.Data[4:]...)
+	} else {
+		dh.initBuf = append(dh.initBuf, p.Data...)
+	}
+
+	if dh.expectedInitPackets >= dh.receivedInitPackets {
+		chunks := NewChunks()
+		if err := chunks.DeserializeMap(dh.initBuf); err != nil {
+			log.Error("Error deserializing chunks: ", err)
+			return ErrorPacket(err), err
+		}
+		dh.ChunkMap = chunks.ChunkMap()
+		c.State = STATE_DATA
+	}
 
 	return nil, nil
 }
@@ -109,6 +131,8 @@ func HandleDATA(p *Packet, c *Connection) (*Packet, error) {
 		log.Error("Data packet recieved, but conn is in wrong state")
 		return ErrorPacket(PacketGenericError), PacketGenericError
 	}
+
+	// TODO: IMPLEMENT
 
 	return nil, nil
 }

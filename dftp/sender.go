@@ -2,6 +2,7 @@
 package dftp
 
 import (
+	"encoding/binary"
 	"net"
 )
 
@@ -58,8 +59,8 @@ func (s *Sender) forEachConn(f func(i uint8, conn *Connection) error) error {
 }
 
 func (s *Sender) Send(data []byte) {
-	chunks := NewChunkIDMap()
-	chunkMaps := NewChunkStreamMap()
+	chunks := NewChunkMap()
+	chunkMaps := NewChunksMap()
 
 	if s.State != STATE_DATA {
 		// Prepare chunks
@@ -75,12 +76,30 @@ func (s *Sender) Send(data []byte) {
 		chunkMaps = ChunkIDMaptoStreamMap(chunks, s.maxConcurrent)
 
 		s.forEachConn(func(i uint8, conn *Connection) error {
-			chunkMapData := chunkMaps[i].Serialize()
-			init := &Packet{
-				Type: MSG_TRANSFER_INIT,
-				Data: chunkMapData,
+			chunkMapData := chunkMaps[i].SerializeMap()
+			numPackets := (len(chunkMapData) + PACKET_SIZE - 1) / PACKET_SIZE
+			for i := range numPackets {
+				start := i * PACKET_SIZE
+				end := min(start+PACKET_SIZE, len(chunkMapData))
+				packet := &Packet{
+					Type:     MSG_TRANSFER_INIT,
+					ChunkNum: uint32(i),
+					Data:     chunkMapData[start:end],
+				}
+
+				if i == 0 {
+					buf := make([]byte, 4+len(packet.Data))
+					binary.LittleEndian.PutUint32(buf, packet.ChunkNum)
+					copy(buf[4:], packet.Data)
+					packet.Data = buf
+				}
+
+				if err := conn.Send(packet); err != nil {
+					log.Error("Error sending transfer init: ", err)
+					return err
+				}
 			}
-			return conn.Send(init)
+			return nil
 		})
 
 		s.State = STATE_DATA

@@ -19,14 +19,12 @@ func TestSimplePingPong(t *testing.T) {
 		Data: []byte("PIGN!"),
 	}
 
-	//dftp.UseDeserializeFast()
-
 	var wg sync.WaitGroup
 
 	start := time.Now()
 	for range n {
 		wg.Go(func() {
-			conn, err := dftp.NewConn("127.0.0.1", 3387)
+			conn, err := dftp.NewConn("127.0.0.1", 338, 0)
 			if err != nil {
 				t.Fatal(err)
 				return

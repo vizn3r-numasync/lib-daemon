@@ -19,21 +19,35 @@ type ChunkTransfer struct {
 	Chunks []*Chunk
 }
 
-func NewChunkMap() map[uint32]*Chunk {
-	return make(map[uint32]*Chunk)
-}
-
 type Chunks struct {
 	chunks []*Chunk
 	mu     sync.RWMutex
 }
 
-func NewChunkIDMap() map[uint32]*Chunk {
+func NewChunk() *Chunk {
+	return &Chunk{
+		ID:       0,
+		Checksum: 0,
+		Data:     nil,
+		received: false,
+	}
+}
+
+// Chunks mapped to a chunkID
+func NewChunkMap() map[uint32]*Chunk {
 	return make(map[uint32]*Chunk)
 }
 
-func NewChunkStreamMap() map[uint8]*Chunks {
+// Chunk arrays mapped to a steamID
+func NewChunksMap() map[uint8]*Chunks {
 	return make(map[uint8]*Chunks)
+}
+
+// NewChunks creates a new Chunks object
+func NewChunks() *Chunks {
+	return &Chunks{
+		chunks: make([]*Chunk, 0),
+	}
 }
 
 func ChunkIDMaptoStreamMap(chunkIDMap map[uint32]*Chunk, streamNum uint8) map[uint8]*Chunks {
@@ -48,7 +62,7 @@ func ChunkIDMaptoStreamMap(chunkIDMap map[uint32]*Chunk, streamNum uint8) map[ui
 	return chunkMaps
 }
 
-func (c *Chunks) Serialize() []byte {
+func (c *Chunks) SerializeMap() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	buf := bytes.NewBuffer(nil)
@@ -62,7 +76,7 @@ func (c *Chunks) Serialize() []byte {
 	return buf.Bytes()
 }
 
-func (c *Chunks) Deserialize(data []byte) error {
+func (c *Chunks) DeserializeMap(data []byte) error {
 	buf := bytes.NewBuffer(data)
 
 	var numChunks uint32
@@ -87,6 +101,17 @@ func (c *Chunks) Deserialize(data []byte) error {
 		})
 	}
 	return nil
+}
+
+// chunkID - checksum map
+func (c *Chunks) ChunkMap() map[uint32]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	chunkMap := make(map[uint32]string)
+	for _, chunk := range c.chunks {
+		chunkMap[chunk.ID] = string(chunk.Checksum)
+	}
+	return chunkMap
 }
 
 func (c *Chunks) AddChunk(chunk *Chunk) {
