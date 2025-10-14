@@ -1,6 +1,7 @@
 package dftp_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 var m *dftp.Receiver
+var ready = make(chan struct{})
 
 func init() {
 	dftp.RegisterPacketHandler(dftp.MSG_PIGN, func(p *dftp.Packet, c *dftp.Connection) (*dftp.Packet, error) {
@@ -23,20 +25,35 @@ func init() {
 	})
 	m = dftp.NewReceiver("127.0.0.1", 3387)
 	go func() {
-		if err := m.Listen(nil); err != nil {
+		if err := m.Listen(ready); err != nil {
 			panic(err)
 		}
 	}()
-	time.Sleep(time.Millisecond * 100)
+
+	<-ready
 }
 
 //go:embed test.txt
 var text []byte
 
-func BenchmarkTransferInit(b *testing.B) {
-	time.Sleep(time.Millisecond * 100)
-	s := dftp.NewSession("127.0.0.1", 3387, 0, 4)
+func TestTransferInitSmall(b *testing.T) {
+	s := dftp.NewSession("127.0.0.1", 3387, 0, 1)
+
+	fmt.Println("Sending...")
+	s.Send([]byte("Hello world!"))
+	fmt.Println("Receiving...")
+	s.Recv()
+	fmt.Println("Done")
+}
+
+func TestTransferInitBig(b *testing.T) {
+	s := dftp.NewSession("127.0.0.1", 3387, 0, 1)
+
+	fmt.Println("Sending...")
 	s.Send(text)
+	fmt.Println("Receiving...")
+	s.Recv()
+	fmt.Println("Done")
 }
 
 func BenchmarkSingleRequest(b *testing.B) {

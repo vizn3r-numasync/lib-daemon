@@ -25,6 +25,8 @@ var packetHandlers = map[MessageType]PacketHander{
 	MSG_POGN: HandlePOGN,
 
 	MSG_TRANSFER_INIT: HandleTRANSFER_INIT,
+	MSG_DATA:          HandleDATA,
+	MSG_CHECK:         HandleCHECK,
 
 	MSG_ERROR: HandleERROR,
 }
@@ -36,9 +38,11 @@ var m sync.Mutex
 var handl = logger.New("HNDL", logger.Red)
 
 var (
-	PacketGenericError        = fmt.Errorf("an unexpected errror has occured")
-	PacketWrongStateError     = fmt.Errorf("conn is in wrong state")
-	PacketInvalidAddressError = fmt.Errorf("invalid address")
+	PacketGenericError          = fmt.Errorf("an unexpected errror has occured")
+	PacketWrongStateError       = fmt.Errorf("conn is in wrong state")
+	PacketInvalidAddressError   = fmt.Errorf("invalid address")
+	PacketEmptyOrNilError       = fmt.Errorf("packet is empty or nil")
+	PacketHandlerNotImplemented = fmt.Errorf("packet handler not implemented")
 )
 
 func NewDataHandler(sessionID uint32) *DataHandler {
@@ -58,7 +62,7 @@ func (conn *Connection) handlePacket(packet *Packet) (*Packet, error) {
 	handl.Debug("Received type: ", packet.Type)
 	handler, ok := packetHandlers[packet.Type]
 	if !ok {
-		err := fmt.Errorf("No handler for packet type %d", packet.Type)
+		err := fmt.Errorf("no handler for packet type %d", packet.Type)
 		handl.Error("Error handling packet: ", err)
 		return &Packet{
 			Type: MSG_ERROR,
@@ -120,14 +124,15 @@ func HandleTRANSFER_INIT(p *Packet, c *Connection) (*Packet, error) {
 		dh.initBuf = append(dh.initBuf, p.Data...)
 	}
 
+	// Deserialize chunkMap
 	if dh.expectedInitPackets >= dh.receivedInitPackets {
-		chunks := NewChunks()
-		if err := chunks.DeserializeMap(dh.initBuf); err != nil {
-			handl.Error("Error deserializing chunks: ", err)
-			return ErrorPacket(err), err
+		dh.ChunkMap = make(map[uint32]uint32)
+		for i := 0; i < int(dh.expectedInitPackets); i++ {
+			chunkNum := binary.LittleEndian.Uint32(dh.initBuf[i*4 : (i+1)*4])
+			chunkSize := binary.LittleEndian.Uint32(dh.initBuf[(i+1)*4 : (i+2)*4])
+			dh.ChunkMap[chunkNum] = chunkSize
 		}
-		dh.ChunkMap = chunks.ChunkMap()
-		c.State = STATE_DATA
+		handl.Debug("ChunkMap: ", dh.ChunkMap)
 	}
 
 	return nil, nil
@@ -142,5 +147,12 @@ func HandleDATA(p *Packet, c *Connection) (*Packet, error) {
 
 	// TODO: IMPLEMENT
 
-	return nil, nil
+	return ErrorPacket(PacketHandlerNotImplemented), nil
+}
+
+func HandleCHECK(p *Packet, c *Connection) (*Packet, error) {
+	handl.Debug("CHECK")
+	// TODO: IMPLEMENT
+
+	return ErrorPacket(PacketHandlerNotImplemented), nil
 }

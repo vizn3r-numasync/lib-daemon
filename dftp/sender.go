@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"net"
+	"sync"
 
 	"github.com/gofrs/uuid"
 	"github.com/vizn3r/go-lib/logger"
@@ -18,6 +19,9 @@ type Sender struct {
 	Connections map[uint8]*Connection
 
 	maxConcurrent uint8
+
+	wg sync.WaitGroup
+	mu sync.RWMutex
 }
 
 func NewEmptySender() *Sender {
@@ -86,37 +90,43 @@ func (s *Sender) forEachConn(f func(i uint8, conn *Connection) error) error {
 }
 
 func (s *Sender) Send(data []byte) {
-	chunks := NewChunkMap()
-	chunkMaps := NewChunksMap()
+	chunkNum := uint32((len(data) + DATA_SIZE - 1) / DATA_SIZE)
+	chunks := make([]*Chunk, chunkNum)
+	for i := range chunkNum {
+		chunks[i] = &Chunk{
+			ID:       i,
+			Checksum: 0,
+			Data:     data[i*DATA_SIZE : min((i+1)*DATA_SIZE, uint32(len(data)))],
+			Received: false,
+		}
+	}
 
 	sendl.Debug("Preparing ", len(data), " bytes for ", s.RemoteAddr, " seessionID: ", s.SessionID)
 
 	if s.State != STATE_DATA {
-		// Prepare chunks
 		sendl.Debug("Preparing chunks")
-		for chunkID := range uint32(len(data) / DATA_SIZE) {
-			chunks[chunkID] = &Chunk{
-				ID:       chunkID,
-				Checksum: 0,
-				Data:     data[chunkID*DATA_SIZE : (chunkID+1)*DATA_SIZE],
-				received: false,
-			}
-		}
-
-		sendl.Debug("Preparing chunk maps")
-		chunkMaps = ChunkIDMaptoStreamMap(chunks, s.maxConcurrent)
 
 		s.forEachConn(func(i uint8, conn *Connection) error {
-			chunkMapData := chunkMaps[i].SerializeMap()
-			numPackets := (len(chunkMapData) + PACKET_SIZE - 1) / PACKET_SIZE
+			chunkMap := []byte{} // uint32 chunkID + uint32 checksum
+
+			// Populate chunkMap based on number of streams
+			offset := 0
+			for chunkID := uint32(i); chunkID < chunkNum; chunkID += uint32(s.maxConcurrent) {
+				chunkMap = append(chunkMap, make([]byte, 8)...)
+				binary.LittleEndian.PutUint32(chunkMap[offset:offset+4], chunkID)
+				binary.LittleEndian.PutUint32(chunkMap[offset+4:offset+8], chunks[chunkID].Checksum)
+				offset += 8
+			}
+
+			numPackets := (len(chunkMap) + PACKET_SIZE - 1) / PACKET_SIZE
 			sendl.Debug("Number of packets: ", numPackets)
 			for i := range numPackets {
 				start := i * PACKET_SIZE
-				end := min(start+PACKET_SIZE, len(chunkMapData))
+				end := min(start+PACKET_SIZE, len(chunkMap))
 				packet := &Packet{
 					Type:     MSG_TRANSFER_INIT,
 					ChunkNum: uint32(i),
-					Data:     chunkMapData[start:end],
+					Data:     chunkMap[start:end],
 				}
 
 				if i == 0 {
@@ -126,7 +136,7 @@ func (s *Sender) Send(data []byte) {
 					packet.Data = buf
 				}
 
-				sendl.Debug("Sending packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
+				sendl.Debug("Sending chunkMap packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
 				if err := conn.Send(packet); err != nil {
 					sendl.Error("Error sending transfer init: ", err)
 					return err
@@ -142,7 +152,17 @@ func (s *Sender) Send(data []byte) {
 	s.forEachConn(func(i uint8, conn *Connection) error {
 		go func(i uint8, conn *Connection) {
 			for {
-				chunk := chunkMaps[i].Next()
+				var chunk *Chunk = nil
+				s.mu.Lock()
+				for chunkID := uint32(i); chunkID < chunkNum; chunkID += uint32(s.maxConcurrent) {
+					if !chunks[chunkID].Received {
+						chunk = chunks[chunkID]
+						chunks[chunkID].Received = true
+						break
+					}
+				}
+				s.mu.Unlock()
+
 				if chunk == nil {
 					data := &Packet{
 						Type: MSG_CHECK,
@@ -159,7 +179,7 @@ func (s *Sender) Send(data []byte) {
 					Data: chunk.Data,
 				}
 
-				sendl.Debug("Sending packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
+				sendl.Debug("Sending data packetID: ", i, " to ", conn.RemoteAddr, " sessionID: ", conn.SessionID, " connID: ", conn.ConnID)
 				if err := conn.Send(data); err != nil {
 					sendl.Error("Error sending data: ", err)
 					return
@@ -169,4 +189,16 @@ func (s *Sender) Send(data []byte) {
 		return nil
 	})
 	s.State = STATE_IDLE
+}
+
+func (s *Sender) Recv() {
+	s.forEachConn(func(i uint8, conn *Connection) error {
+		s.wg.Add(1)
+		go func(i uint8, conn *Connection) {
+			conn.Recv()
+			s.wg.Done()
+		}(i, conn)
+		return nil
+	})
+	s.wg.Wait()
 }

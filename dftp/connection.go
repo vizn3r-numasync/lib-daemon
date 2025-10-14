@@ -183,9 +183,19 @@ func (conn *Connection) Close() error {
 
 // Send sends a packet to the Connection.RemoteAddr.
 func (conn *Connection) Send(packet *Packet) error {
+	if packet == nil {
+		packet = ErrorPacket(PacketEmptyOrNilError)
+		log.Error("Packet is nil")
+	}
+
+	if packet.SessionID == 0 {
+		packet.SessionID = conn.SessionID
+	}
+
 	buf := packet.Serialize()
 
-	connl.Debug("Sending from ", conn.LocalAddr, " to ", conn.RemoteAddr, " bytes: ", len(buf), " type: ", packet.Type)
+	connl.Debug("Sending from ", conn.LocalAddr, " to ", conn.RemoteAddr, " bytes: ", len(buf), " type: ", packet.Type, " sessionID: ", conn.SessionID)
+	connl.Debug("Packet sessoinID: ", packet.SessionID)
 
 	conn.mu.RLock()
 	addr := conn.RemoteAddr
@@ -286,7 +296,7 @@ func (conn *Connection) receiver() {
 			connl.Info("Connection closed while receiving packet")
 			return
 		case conn.packet <- packet:
-			connl.Debug("Putting packet in channel: ", string(packet.Data))
+			connl.Debug("Putting packet in channel")
 		default:
 			connl.Warn("Packet queue full")
 		}
